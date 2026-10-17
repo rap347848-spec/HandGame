@@ -26,6 +26,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // اسم اللاعب يُحفظ على الجوال ويمكن تغييره من شاشة البداية
+        val prefs = getSharedPreferences("handremmy", MODE_PRIVATE)
+        c.rename(prefs.getString("name", "لاعب") ?: "لاعب")
+        c.onName = { prefs.edit().putString("name", it).apply() }
         setContent { App(c, onHost = ::host, onJoin = ::join) }
     }
 

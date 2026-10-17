@@ -274,7 +274,7 @@ fun Menu(c: Controller, onHost: () -> Unit, onJoin: () -> Unit) {
             Modifier.weight(1.3f).background(Color(0x33FFFFFF), RoundedCornerShape(20.dp)).padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            OutlinedTextField(c.myName, { c.myName = it.take(12) }, label = { Text("اسمك") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(c.myName, { c.rename(it) }, label = { Text("اسمك") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             Text("عدد الجولات (يحدده المضيف)", color = Color.White, fontWeight = FontWeight.Bold)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 for (r in 1..7) FilterChip(selected = c.rounds == r, onClick = { c.rounds = r }, label = { Text("$r") })
@@ -298,11 +298,24 @@ fun Lobby(c: Controller) {
                     Text(n, color = Color.White, fontSize = 13.sp)
                 }
             }
+            if (c.isHost) repeat(c.effectiveBots()) { b ->
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Avatar(c.lobby.size + b, Mood.SCARED, 60.dp)
+                    Text(c.botName(b), color = Color(0xFFB0BEC5), fontSize = 13.sp)
+                }
+            }
         }
         Spacer(Modifier.weight(1f))
         if (c.isHost) {
             Text("على اللاعبين الآخرين اختيار جوالك من «انضمام للعبة» (بعد الاقتران بالبلوتوث)", color = Color.White, fontSize = 12.sp, textAlign = TextAlign.Center)
-            Pill("ابدأ اللعبة (${c.rounds} جولات)", Color(0xFF2E7D32), enabled = c.lobby.size >= 2, big = true) { c.startGame() }
+            Text("عدد البوتات", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (b in 0..3) FilterChip(
+                    selected = c.effectiveBots() == b, enabled = b <= 4 - c.lobby.size,
+                    onClick = { c.botCount = b }, label = { Text(if (b == 0) "بدون" else "$b") }
+                )
+            }
+            Pill("ابدأ اللعبة (${c.rounds} جولات)", Color(0xFF2E7D32), enabled = c.lobby.size + c.effectiveBots() >= 2, big = true) { c.startGame() }
         } else Text("بانتظار المضيف ليبدأ اللعبة...", color = Color.White)
         Pill("خروج", Color(0xFF6D4C41)) { c.reset() }
     }
@@ -597,10 +610,12 @@ fun Table(c: Controller) {
             }
 
             // ------- شريط الأزرار
-            Row(
-                Modifier.fillMaxWidth().height(46.dp).horizontalScroll(rememberScrollState()),
+            Row(Modifier.fillMaxWidth().height(46.dp), verticalAlignment = Alignment.CenterVertically) {
+              // يمين الشريط ثابت دائماً (أزرار اللعب + سطر/سطرين)، ويسار يتمرّر عند ضيق الشاشة
+              Row(
+                Modifier.weight(1f).horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically
-            ) {
+              ) {
                 Box(
                     Modifier.onGloballyPositioned { c.centers[s.me] = it.boundsInRoot().center },
                     contentAlignment = Alignment.Center
@@ -629,6 +644,8 @@ fun Table(c: Controller) {
                         modifier = Modifier.background(Color(0x99000000), RoundedCornerShape(10.dp)).border(1.dp, if (ok) Good else Color.Transparent, RoundedCornerShape(10.dp)).padding(horizontal = 10.dp, vertical = 4.dp)
                     )
                 }
+              }
+              Row(Modifier.padding(start = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 // تكوين / فك التكوين (داخل اليد بدون إنزال)
                 if (selected.size >= 2 && c.groups.none { it.toSet() == chosen }) Pill("تكوين", Color(0xFF00897B)) { c.formGroup(selected.toList()); selected.clear() }
                 if (selected.any { id -> c.groups.any { id in it } }) Pill("فك التكوين", Color(0xFF8D6E63)) { c.ungroupCards(selected.toList()); selected.clear() }
@@ -641,6 +658,7 @@ fun Table(c: Controller) {
                 } else if (canLay) Pill("نزّل", Color(0xFF2E7D32), big = true) { sendMeld() }
                 if (myTurn && s.drew && selected.size == 1 && s.taken < 0) Pill("ارمِ", Color(0xFFC62828)) { discard(selected[0]) }
                 Pill(if (twoRows) "سطر واحد" else "سطرين", Color(0xFF455A64)) { twoRows = !twoRows }
+              }
             }
 
             Hand(c, selected, stagedIds, s.taken, twoRows, ::discard, ::dropCard)
@@ -797,7 +815,10 @@ fun FinalScene(c: Controller, s: UiState) {
                 if (s.me == loser.id) "أنت الخاسر... استعد 😅" else "اضغط على وجه الخاسر لضربه بالشبشب",
                 color = Color(0xFFFFCC80), fontSize = 13.sp
             )
-            Pill("خروج", Color(0xFF6D4C41), big = true) { c.reset() }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Pill("لعبة جديدة بنفس اللاعبين", Color(0xFF2E7D32), big = true) { c.send(JSONObject().put("t", "newgame")) }
+                Pill("خروج", Color(0xFF6D4C41), big = true) { c.reset() }
+            }
         }
     }
 }

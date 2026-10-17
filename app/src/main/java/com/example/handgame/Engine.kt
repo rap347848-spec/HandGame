@@ -3,7 +3,8 @@ package com.example.handgame
 import org.json.JSONArray
 import org.json.JSONObject
 
-class Player(val id: Int, val name: String) {
+class Player(val id: Int, val name: String, val isBot: Boolean = false) {
+    var noTake = false
     var hand = mutableListOf<Int>()
     var laid = false
     var total = 0
@@ -12,6 +13,8 @@ class Player(val id: Int, val name: String) {
 }
 
 class Meld(val cards: MutableList<Int>)
+
+private var fxCounter = 0   // يستمر بين الألعاب حتى لا تتكرر أرقام المؤثرات
 
 /** محرك اللعبة — يعمل فقط على جوال المضيف، والبقية يستلمون الحالة. */
 class Engine(val players: List<Player>, val totalRounds: Int) {
@@ -36,12 +39,19 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
     var note = ""
     var deltas = mapOf<Int, Int>()
     var deadline = 0L
-    private var fxSeq = 0
+    val gid = (System.nanoTime() and 0x3fffffff).toInt()   // رقم اللعبة (يتغير عند لعبة جديدة)
     private var lastFx: JSONObject? = null
 
     /** مؤثر يراه الجميع (رمي بيض/شبشب، ضحكة): يصل للكل مع الحالة ويُميَّز برقم تسلسلي */
     fun emitFx(from: Int, to: Int, kind: String) {
-        lastFx = JSONObject().put("seq", ++fxSeq).put("from", from).put("to", to).put("kind", kind)
+        lastFx = JSONObject().put("seq", ++fxCounter).put("from", from).put("to", to).put("kind", kind)
+    }
+
+    /** يلعب البوت الحالي خطوة واحدة */
+    fun botStep() {
+        if (roundOver) return
+        val p = players[turn]
+        if (p.isBot) Bot.step(this, p)
     }
 
     fun startRound() {
@@ -242,7 +252,7 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
     }
 
     fun viewFor(pid: Int): JSONObject = JSONObject().apply {
-        put("t", "state"); put("me", pid); put("round", round); put("rounds", totalRounds)
+        put("t", "state"); put("gid", gid); put("me", pid); put("round", round); put("rounds", totalRounds)
         put("turn", turn); put("drew", drew); put("dby", lastDiscBy)
         put("taken", if (pid == turn) taken else -1)
         lastFx?.let { put("fx", it) }

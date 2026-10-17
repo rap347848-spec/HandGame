@@ -50,7 +50,7 @@ class UiState(
     val me: Int, val round: Int, val rounds: Int, val turn: Int, val drew: Boolean, val sec: Int,
     val stock: Int, val discTop: Int, val players: List<PInfo>, val hand: List<Int>,
     val melds: List<List<Int>>, val roundOver: Boolean, val gameOver: Boolean, val note: String,
-    val dby: Int, val rw: Int, val hw: Boolean, val taken: Int
+    val dby: Int, val rw: Int, val hw: Boolean, val taken: Int, val gid: Int
 )
 
 class FxEvent(val seq: Int, val from: Int, val to: Int, val kind: String)
@@ -68,6 +68,16 @@ class Controller {
     var screen by mutableStateOf("menu")      // menu | hostLobby | clientLobby | join | table
     var myName by mutableStateOf("لاعب")
     var rounds by mutableIntStateOf(3)
+    var botCount by mutableIntStateOf(0)       // عدد البوتات يختاره المضيف
+    var onName: ((String) -> Unit)? = null     // لحفظ الاسم على الجوال
+    private val botNames = listOf("بوت سلطان", "بوت ريم", "بوت فهد")
+    private var botPending = false
+
+    /** عدد البوتات الفعلي: لا يزيد المجموع عن 4 لاعبين */
+    fun effectiveBots() = botCount.coerceIn(0, maxOf(0, 4 - lobby.size))
+    fun botName(i: Int) = botNames[i % botNames.size]
+
+    fun rename(n: String) { myName = n.take(12); onName?.invoke(myName) }
     var msg by mutableStateOf("")
     val lobby = mutableStateListOf<String>()
     var ui by mutableStateOf<UiState?>(null)
@@ -134,9 +144,12 @@ class Controller {
     }
 
     fun startGame() {
-        if (lobby.size < 2) return
+        val nb = effectiveBots()
+        if (lobby.size + nb < 2) return
         try { server?.close() } catch (_: Exception) {}
-        val e = Engine(lobby.mapIndexed { i, n -> Player(i, n) }, rounds)
+        val humans = lobby.mapIndexed { i, n -> Player(i, n) }
+        val bots = List(nb) { Player(lobby.size + it, botName(it), isBot = true) }
+        val e = Engine(humans + bots, rounds)
         e.startRound(); engine = e
         screen = "table"; pushState(); tick()
     }
@@ -153,6 +166,25 @@ class Controller {
         val e = engine ?: return
         for ((pid, l) in links) l.send(e.viewFor(pid))
         applyView(e.viewFor(0))
+        scheduleBot()
+    }
+
+    /** البوت يفكر ~1.5 ثانية ثم يلعب خطوة (سحب، ثم نزول ورمي) */
+    private fun scheduleBot() {
+        val e = engine ?: return
+        if (botPending || e.roundOver || !e.players[e.turn].isBot) return
+        botPending = true
+        main.postDelayed({
+            botPending = false
+            val en = engine ?: return@postDelayed
+            if (!en.roundOver && en.players[en.turn].isBot) { en.botStep(); pushState() }
+        }, 1500)
+    }
+
+    /** لعبة جديدة بنفس اللاعبين والبوتات وعدد الجولات */
+    private fun restart(old: Engine) {
+        val e = Engine(old.players.map { Player(it.id, it.name, it.isBot) }, old.totalRounds)
+        e.startRound(); engine = e; orders.clear()
     }
 
     private fun groupsOf(m: JSONObject): List<List<Int>> {
@@ -173,6 +205,7 @@ class Controller {
                 "throw" -> e.throwAt(pid, m.getInt("to"), m.getString("kind"))
                 "peek" -> { handlePeek(e, pid, m.getInt("to")); null }
                 "order" -> { val a = m.getJSONArray("ids"); orders[pid] = List(a.length()) { a.getInt(it) }; null }
+                "newgame" -> { if (e.roundOver && e.gameOver) restart(e); null }
                 "next" -> { if (pid == 0 && e.roundOver && !e.gameOver) e.startRound(); null }
                 else -> null
             }
@@ -248,10 +281,10 @@ class Controller {
             v.getInt("sec"), v.getInt("stock"), v.getInt("discTop"), ps, hand,
             List(ma.length()) { ints(ma.getJSONArray(it)) },
             v.getBoolean("roundOver"), v.getBoolean("gameOver"), v.getString("note"),
-            v.getInt("dby"), v.getInt("rw"), v.getBoolean("hw"), v.getInt("taken")
+            v.getInt("dby"), v.getInt("rw"), v.getBoolean("hw"), v.getInt("taken"), v.getInt("gid")
         )
         ui = st
-        val sameRound = prev != null && prev.round == st.round
+        val sameRound = prev != null && prev.round == st.round && prev.gid == st.gid
         if (!sameRound) { order.clear(); fresh.clear(); groups.clear() }
         val added = hand.filter { it !in order }
         // الورقة الجديدة تظهر في أقصى اليسار بإطار ملوّن لمدة 3 ثوانٍ
@@ -322,6 +355,7 @@ class Controller {
         try { server?.close() } catch (_: Exception) {}
         links.values.forEach { it.close() }; links.clear()
         clientLink?.close(); clientLink = null
+        botPending = false
         screen = "menu"
     }
 }
