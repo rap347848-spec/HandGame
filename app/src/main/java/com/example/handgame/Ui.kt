@@ -48,7 +48,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -407,8 +410,29 @@ fun Seat(
 @Composable
 fun ScoreBoard(s: UiState, modifier: Modifier) {
     var open by remember { mutableStateOf(false) }
+    // القائمة تُسحب بالإصبع وتُنقل لأي مكان على الشاشة، والضغطة تكبّرها وتصغّرها
+    var dx by remember { mutableFloatStateOf(0f) }
+    var dy by remember { mutableFloatStateOf(0f) }
+    var sz by remember { mutableStateOf(IntSize.Zero) }
+    val cfg = LocalConfiguration.current
+    val den = LocalDensity.current
+    val pad = with(den) { 6.dp.toPx() }
+    val maxLeft = with(den) { cfg.screenWidthDp.dp.toPx() } - sz.width - pad * 2     // أقصى حركة لليسار
+    val maxDown = with(den) { cfg.screenHeightDp.dp.toPx() } - sz.height - pad * 2   // أقصى حركة للأسفل
+    LaunchedEffect(sz) {                                                              // بعد التكبير/التصغير ابقَ داخل الشاشة
+        dx = dx.coerceIn(-maxOf(0f, maxLeft), 0f)
+        dy = dy.coerceIn(0f, maxOf(0f, maxDown))
+    }
     Column(
-        modifier.animateContentSize().background(Color(0xDD1A0B3B), RoundedCornerShape(12.dp))
+        modifier.offset { IntOffset(dx.roundToInt(), dy.roundToInt()) }.onSizeChanged { sz = it }
+            .pointerInput(Unit) {
+                detectDragGestures { ch, d ->
+                    ch.consume()
+                    dx = (dx + d.x).coerceIn(-maxOf(0f, maxLeft), 0f)
+                    dy = (dy + d.y).coerceIn(0f, maxOf(0f, maxDown))
+                }
+            }
+            .animateContentSize().background(Color(0xDD1A0B3B), RoundedCornerShape(12.dp))
             .border(1.dp, Gold, RoundedCornerShape(12.dp)).clickable { open = !open }.padding(7.dp)
     ) {
         if (!open) {
