@@ -272,11 +272,11 @@ fun Logo() {
 
 @Composable
 fun Menu(c: Controller, onHost: () -> Unit, onJoin: () -> Unit) {
-    Row(Modifier.fillMaxSize().padding(24.dp), horizontalArrangement = Arrangement.spacedBy(28.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { Logo() }
         Column(
-            Modifier.weight(1.3f).background(Color(0x33FFFFFF), RoundedCornerShape(20.dp)).padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            Modifier.weight(1.4f).background(Color(0x33FFFFFF), RoundedCornerShape(20.dp)).verticalScroll(rememberScrollState()).padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             OutlinedTextField(c.myName, { c.rename(it) }, label = { Text("اسمك") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             Text("عدد الجولات (يحدده المضيف)", color = Color.White, fontWeight = FontWeight.Bold)
@@ -284,33 +284,36 @@ fun Menu(c: Controller, onHost: () -> Unit, onJoin: () -> Unit) {
                 for (r in 1..7) FilterChip(selected = c.rounds == r, onClick = { c.rounds = r }, label = { Text("$r") })
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Box(Modifier.weight(1f)) { Pill("استضافة لعبة", Color(0xFF2E7D32), big = true, onClick = onHost) }
-                Box(Modifier.weight(1f)) { Pill("انضمام بلوتوث", Color(0xFF1565C0), big = true, onClick = onJoin) }
+                Box(Modifier.weight(1f)) { Pill("استضافة لعبة", Color(0xFF2E7D32), onClick = onHost) }
+                Box(Modifier.weight(1f)) { Pill("انضمام بلوتوث", Color(0xFF1565C0), onClick = onJoin) }
             }
-            Pill("انضمام عبر الواي فاي (نفس الراوتر)", Color(0xFF00897B), big = true) { c.openWifiJoin() }
+            Pill("انضمام عبر الواي فاي (نفس الراوتر)", Color(0xFF00897B)) { c.openWifiJoin() }
         }
     }
 }
 
 @Composable
 fun Lobby(c: Controller) {
-    Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("اللاعبون (${c.lobby.size}/4)", fontSize = 22.sp, color = Gold, fontWeight = FontWeight.Bold)
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp), horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text("اللاعبون (${c.lobby.size}/4)", fontSize = 20.sp, color = Gold, fontWeight = FontWeight.Bold)
         Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
             c.lobby.forEachIndexed { i, n ->
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Avatar(i, Mood.HAPPY, 60.dp)
+                    Avatar(i, Mood.HAPPY, 46.dp)
                     Text(n, color = Color.White, fontSize = 13.sp)
                 }
             }
             if (c.isHost) repeat(c.effectiveBots()) { b ->
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Avatar(c.lobby.size + b, Mood.SCARED, 60.dp)
+                    Avatar(c.lobby.size + b, Mood.SCARED, 46.dp)
                     Text(c.botName(b), color = Color(0xFFB0BEC5), fontSize = 13.sp)
                 }
             }
         }
-        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.height(2.dp))
         if (c.isHost) {
             Text("بلوتوث: يختار الآخرون جوالك من «انضمام بلوتوث» بعد الاقتران", color = Color.White, fontSize = 12.sp, textAlign = TextAlign.Center)
             Text(
@@ -325,7 +328,7 @@ fun Lobby(c: Controller) {
                     onClick = { c.botCount = b }, label = { Text(if (b == 0) "بدون" else "$b") }
                 )
             }
-            Pill("ابدأ اللعبة (${c.rounds} جولات)", Color(0xFF2E7D32), enabled = c.lobby.size + c.effectiveBots() >= 2, big = true) { c.startGame() }
+            Pill("ابدأ اللعبة (${c.rounds} جولات)", Color(0xFF2E7D32), enabled = c.lobby.size + c.effectiveBots() >= 2) { c.startGame() }
         } else Text("بانتظار المضيف ليبدأ اللعبة...", color = Color.White)
         Pill("خروج", Color(0xFF6D4C41)) { c.reset() }
     }
@@ -334,7 +337,7 @@ fun Lobby(c: Controller) {
 @Composable
 fun JoinWifi(c: Controller) {
     var ip by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("الانضمام عبر الواي فاي", fontSize = 22.sp, color = Gold, fontWeight = FontWeight.Bold)
         Text(
             when {
@@ -350,7 +353,7 @@ fun JoinWifi(c: Controller) {
             OutlinedTextField(ip, { ip = it }, label = { Text("عنوان المضيف مثل 192.168.1.5") }, singleLine = true, modifier = Modifier.weight(1f))
             Pill("اتصال", Color(0xFF2E7D32), enabled = ip.isNotBlank()) { c.connectWifi(ip) }
         }
-        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.height(4.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Pill("بحث من جديد", Color(0xFF1565C0), enabled = !c.scanning) { c.scanWifi() }
             Pill("رجوع", Color(0xFF6D4C41)) { c.reset() }
@@ -361,13 +364,13 @@ fun JoinWifi(c: Controller) {
 @android.annotation.SuppressLint("MissingPermission")
 @Composable
 fun JoinList(c: Controller) {
-    Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("اختر جوال المضيف", fontSize = 22.sp, color = Gold, fontWeight = FontWeight.Bold)
         Text("لازم تكون مقترناً (Pair) مع جوال المضيف من إعدادات البلوتوث أولاً.", color = Color.White)
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             itemsIndexed(c.bonded()) { _, d -> Pill(d.name ?: d.address, Color(0xFF1565C0)) { c.connect(d) } }
         }
-        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.height(4.dp))
         Pill("رجوع", Color(0xFF6D4C41)) { c.reset() }
     }
 }
