@@ -564,7 +564,9 @@ fun Table(c: Controller) {
     val canLay = myTurn && selOk && (if (!meP.laid) total >= 51 else (staged.isNotEmpty() || formedValid.isNotEmpty() || partsValid))
 
     fun sendMeld() {
-        val g = staged.toList() + formedValid + (if (partsValid) parts else emptyList())
+        // ترتيب كل مجموعة كما رتّبتها في يدك (يسار إلى يمين): موقع الجوكر يحدد بديله
+        val g = (staged.toList() + formedValid + (if (partsValid) parts else emptyList()))
+            .map { grp -> grp.sortedBy { c.order.indexOf(it) } }
         c.send(JSONObject().put("t", "meld").put("groups", JSONArray(g.map { JSONArray(it) })))
         staged.clear(); selected.clear()
     }

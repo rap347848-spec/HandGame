@@ -64,20 +64,96 @@ object Melds {
         return best
     }
 
-    /** ترتيب العرض على الطاولة: التسلسل مرتب والجوكر في مكانه */
-    fun display(ids: List<Int>): List<Int> {
-        val jk = ids.filter { Cards.isJoker(it) }.toMutableList()
+    /** هل المجموعة تشكيلة (نفس الرقم بأنواع مختلفة، حتى 4 أوراق)؟ */
+    fun isSet(ids: List<Int>): Boolean {
         val reg = ids.filter { !Cards.isJoker(it) }
-        if (reg.isEmpty() || reg.map { Cards.rank(it) }.toSet().size == 1) return reg + jk
-        val aceHigh = reg.any { Cards.rank(it) == 1 } && reg.any { Cards.rank(it) >= 11 }
-        fun er(id: Int) = if (Cards.rank(id) == 1 && aceHigh) 14 else Cards.rank(id)
-        val out = mutableListOf<Int>()
-        var expected = er(reg.minByOrNull { er(it) }!!)
-        for (c in reg.sortedBy { er(it) }) {
-            while (expected < er(c) && jk.isNotEmpty()) { out.add(jk.removeAt(0)); expected++ }
-            out.add(c); expected = er(c) + 1
+        return reg.isNotEmpty() && ids.size <= 4 &&
+            reg.map { Cards.rank(it) }.toSet().size == 1 &&
+            reg.map { Cards.suit(it) }.toSet().size == reg.size
+    }
+
+    /** هل الورقة تساوي المرتبة المتوقعة (الآص يصلح 1 أو 14)؟ */
+    fun matches(card: Int, expected: Int) =
+        Cards.rank(card) == expected || (Cards.rank(card) == 1 && expected == 14)
+
+    /**
+     * مراتب المواقع (1..14) لتسلسل مرتب كما نزل. الاتجاه (صاعد أو نازل) يُعرف من الورق الحقيقي،
+     * والجوكر يمثل ما يناسب موقعه. يرجع null إن لم يكن الترتيب المعطى تسلسلاً صحيحاً.
+     */
+    fun runRanks(order: List<Int>): List<Int>? {
+        val n = order.size
+        if (n < 3) return null
+        val first = order.indexOfFirst { !Cards.isJoker(it) }
+        if (first < 0) return null
+        if (order.filter { !Cards.isJoker(it) }.map { Cards.suit(it) }.toSet().size != 1) return null
+        val r0s = if (Cards.rank(order[first]) == 1) listOf(1, 14) else listOf(Cards.rank(order[first]))
+        for (dir in listOf(1, -1)) {
+            for (r0 in r0s) {
+                val exp = List(n) { k -> r0 + dir * (k - first) }
+                if (exp.any { it < 1 || it > 14 }) continue
+                if (order.indices.all { k -> Cards.isJoker(order[k]) || matches(order[k], exp[k]) }) return exp
+            }
         }
-        out.addAll(jk)
-        return out
+        return null
+    }
+
+    /** أفضل ترتيب صاعد لتسلسل (الجوكر في مكانه) عندما لا يكون ترتيب اليد تسلسلاً */
+    private fun layout(ids: List<Int>): List<Int> {
+        val n = ids.size
+        val jokers = ids.filter { Cards.isJoker(it) }
+        val reg = ids.filter { !Cards.isJoker(it) }
+        var best: List<Int>? = null
+        var bestV = -1
+        for (aceHigh in listOf(false, true)) {
+            val pos = reg.groupBy { if (Cards.rank(it) == 1 && aceHigh) 14 else Cards.rank(it) }
+            if (pos.isEmpty() || pos.any { it.value.size > 1 }) continue
+            val mn = pos.keys.minOrNull()!!
+            val mx = pos.keys.maxOrNull()!!
+            if (mx - mn + 1 > n) continue
+            for (s in 1..(15 - n)) {
+                if (s <= mn && s + n - 1 >= mx) {
+                    var v = 0
+                    val js = jokers.toMutableList()
+                    val out = ArrayList<Int>()
+                    for (r in s until s + n) { v += rv(r); out.add(pos[r]?.first() ?: js.removeAt(0)) }
+                    if (v > bestV) { bestV = v; best = out }
+                }
+            }
+        }
+        return best ?: ids
+    }
+
+    /** ترتيب المجموعة للنزول: يبقى كما نزّله اللاعب إن كان صحيحاً، وإلا يُرتَّب تلقائياً */
+    fun arrange(ids: List<Int>): List<Int> =
+        if (isSet(ids) || runRanks(ids) != null) ids else layout(ids)
+
+    fun display(ids: List<Int>): List<Int> = arrange(ids)
+
+    /**
+     * يضيف ورقة إلى مجموعة على الطاولة (بدون تغيير مواقع ما فيها)، أو null إن لم تناسب.
+     * التسلسل يمتد من طرفيه فقط، والتشكيلة حتى 4 أوراق.
+     */
+    fun extend(cs: List<Int>, card: Int): List<Int>? {
+        if (isSet(cs)) {
+            if (cs.size >= 4) return null
+            if (Cards.isJoker(card)) return cs + card
+            val reg = cs.filter { !Cards.isJoker(it) }
+            if (Cards.rank(card) != Cards.rank(reg[0]) || reg.any { Cards.suit(it) == Cards.suit(card) }) return null
+            return cs + card
+        }
+        val ranks = runRanks(cs) ?: return null
+        val dir = if (ranks[1] > ranks[0]) 1 else -1
+        val after = ranks.last() + dir
+        val before = ranks.first() - dir
+        if (Cards.isJoker(card)) {
+            if (after in 1..14) return cs + card
+            if (before in 1..14) return listOf(card) + cs
+            return null
+        }
+        val suit = Cards.suit(cs.first { !Cards.isJoker(it) })
+        if (Cards.suit(card) != suit) return null
+        if (after in 1..14 && matches(card, after)) return cs + card
+        if (before in 1..14 && matches(card, before)) return listOf(card) + cs
+        return null
     }
 }

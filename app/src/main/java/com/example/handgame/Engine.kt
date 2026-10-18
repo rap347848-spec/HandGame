@@ -133,7 +133,7 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
         if (!p.laid && sum < OPEN_MIN) return "أول نزول لازم $OPEN_MIN نقطة أو أكثر (مجموعك $sum)"
         val first = !p.laid
         p.hand.removeAll(all.toSet())
-        for (g in groups) melds.add(Meld(Melds.display(g).toMutableList()))
+        for (g in groups) melds.add(Meld(Melds.arrange(g).toMutableList()))
         p.laid = true
         if (taken in all) taken = -1
         when {
@@ -147,34 +147,41 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
     }
 
     /**
-     * وضع ورقة على مجموعة في الطاولة. الأولوية لاستبدال الجوكر إذا ناسبت الورقة مكانه
-     * (فتأخذ الجوكر)، وإلا تُضاف للمجموعة بشرط أنك نزّلت سابقاً.
+     * وضع ورقة على مجموعة في الطاولة.
+     * أخذ الجوكر: يأخذه من يضع الورقة التي يمثلها الجوكر بحسب موقعه كما نزل في التسلسل،
+     * وفي التشكيلة (الكاملة 4 أوراق) من يضع آخر نوع ناقص. وإلا تُضاف الورقة بشرط أنك نزّلت سابقاً.
      */
     fun addToMeld(pid: Int, idx: Int, card: Int): String? {
         check(pid)?.let { return it }
         val p = players[pid]
         if (idx !in melds.indices || card !in p.hand) return "غير صالح"
         if (card == taken && p.hand.size < 3) return "تحتاج أكثر من ورقتين في يدك لتضع هذه الورقة"
-        val m = melds[idx]
+        val cs = melds[idx].cards
         var swapped = false
         if (!Cards.isJoker(card)) {
-            for (j in m.cards.indices) {
-                if (!Cards.isJoker(m.cards[j])) continue
-                val trial = m.cards.toMutableList().also { it[j] = card }
-                if (Melds.value(trial) >= 0) {
-                    val joker = m.cards[j]
-                    m.cards.clear(); m.cards.addAll(Melds.display(trial))
-                    p.hand.remove(card); p.hand.add(joker)
-                    swapped = true
-                    break
-                }
+            val j: Int? = if (Melds.isSet(cs)) {
+                val reg = cs.filter { !Cards.isJoker(it) }
+                if (cs.size == 4 && reg.size < 4 && Cards.rank(card) == Cards.rank(reg[0]) &&
+                    reg.none { Cards.suit(it) == Cards.suit(card) }
+                ) cs.indexOfFirst { Cards.isJoker(it) } else null
+            } else {
+                val ranks = Melds.runRanks(cs)
+                val suit = cs.firstOrNull { !Cards.isJoker(it) }?.let { Cards.suit(it) }
+                if (ranks != null && suit == Cards.suit(card))
+                    cs.indices.firstOrNull { Cards.isJoker(cs[it]) && Melds.matches(card, ranks[it]) }
+                else null
+            }
+            if (j != null && j >= 0) {
+                val joker = cs[j]
+                cs[j] = card
+                p.hand.remove(card); p.hand.add(joker)
+                swapped = true
             }
         }
         if (!swapped) {
-            if (!p.laid) return "لازم تنزّل أولاً (أو استبدل جوكر بالورقة المناسبة)"
-            if (Melds.value(m.cards + card) < 0) return "الورقة لا تناسب هذه المجموعة"
-            val nl = Melds.display(m.cards + card)
-            m.cards.clear(); m.cards.addAll(nl); p.hand.remove(card)
+            if (!p.laid) return "لازم تنزّل أولاً (أو ضع الورقة التي يمثلها الجوكر لتأخذه)"
+            val nl = Melds.extend(cs, card) ?: return "الورقة لا تناسب هذه المجموعة"
+            cs.clear(); cs.addAll(nl); p.hand.remove(card)
         }
         if (card == taken) taken = -1
         if (p.hand.isEmpty()) finish(pid, false)
