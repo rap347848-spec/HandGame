@@ -16,16 +16,34 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.InputStream
+import java.io.OutputStream
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.Inet4Address
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.NetworkInterface
+import java.net.ServerSocket
+import java.net.Socket
+import java.net.SocketAddress
+import java.net.SocketTimeoutException
 import java.util.UUID
 import java.util.concurrent.Executors
 import kotlin.concurrent.thread
 
+const val WIFI_PORT = 47321          // اتصال اللعبة عبر الواي فاي (TCP)
+const val DISCOVERY_PORT = 47322     // البحث عن الغرف على نفس الشبكة (UDP)
+
 val APP_UUID: UUID = UUID.fromString("8f4c6a1e-3b7d-4c52-9a1f-5d2e7b9c0a41")
 
 /** اتصال بلوتوث (RFCOMM) — رسائل JSON، كل رسالة في سطر */
-class Link(private val socket: BluetoothSocket) {
-    private val out = socket.outputStream.bufferedWriter(Charsets.UTF_8)
-    private val inp = socket.inputStream.bufferedReader(Charsets.UTF_8)
+class Link(inS: InputStream, outS: OutputStream, private val closer: () -> Unit) {
+    constructor(socket: BluetoothSocket) : this(socket.inputStream, socket.outputStream, { socket.close() })
+    constructor(socket: Socket) : this(socket.getInputStream(), socket.getOutputStream(), { socket.close() })
+
+    private val out = outS.bufferedWriter(Charsets.UTF_8)
+    private val inp = inS.bufferedReader(Charsets.UTF_8)
     private val q = Executors.newSingleThreadExecutor()
 
     fun send(o: JSONObject) {
@@ -41,8 +59,11 @@ class Link(private val socket: BluetoothSocket) {
         }
     }
 
-    fun close() { try { socket.close() } catch (_: Exception) {}; q.shutdown() }
+    fun close() { try { closer() } catch (_: Exception) {}; q.shutdown() }
 }
+
+/** غرفة وجدناها على نفس الشبكة */
+class WifiHost(val name: String, val ip: String, val port: Int, val players: Int)
 
 class PInfo(val id: Int, val name: String, val n: Int, val total: Int, val laid: Boolean, val delta: Int, val hist: List<Int>)
 
@@ -95,6 +116,11 @@ class Controller {
     private val links = mutableMapOf<Int, Link>()
     private val orders = mutableMapOf<Int, List<Int>>()   // ترتيب ورق اللاعبين (للكشف السري)
     private var server: BluetoothServerSocket? = null
+    private var tcpServer: ServerSocket? = null
+    private var udp: DatagramSocket? = null
+    var wifiIp by mutableStateOf<String?>(null)            // عنوان المضيف على الشبكة (يظهر في شاشة الانتظار)
+    val wifiHosts = mutableStateListOf<WifiHost>()          // الغرف التي وجدها الضيف
+    var scanning by mutableStateOf(false)
     private var clientLink: Link? = null
     private var fxSeen = 0
 
@@ -106,15 +132,78 @@ class Controller {
     }
 
     // ---------------- المضيف ----------------
+    /** المضيف يفتح البلوتوث والواي فاي معاً: يدخل اللاعبون من أيٍّ منهما */
     fun beginListening() {
-        val a = adapter ?: run { msg = "الجهاز لا يدعم البلوتوث"; return }
         isHost = true; lobby.clear(); lobby.add(myName); links.clear(); orders.clear(); engine = null
+        closeServers()
+        startBluetoothServer()
+        startWifiServer()
+        if (server == null && tcpServer == null) { msg = "تعذّر بدء الاستضافة"; screen = "menu"; return }
+        screen = "hostLobby"
+    }
+
+    private fun startBluetoothServer() {
+        val a = adapter ?: return
         try {
+            if (!a.isEnabled) return
             val ss = a.listenUsingRfcommWithServiceRecord("HandGame", APP_UUID)
             server = ss
-            screen = "hostLobby"
             thread { try { while (true) onIncoming(Link(ss.accept())) } catch (_: Exception) {} }
-        } catch (e: Exception) { msg = "تعذّر بدء الاستضافة" }
+        } catch (_: Exception) {}
+    }
+
+    private fun startWifiServer() {
+        wifiIp = localIp()
+        try {
+            val ts = ServerSocket().apply { reuseAddress = true; bind(InetSocketAddress(WIFI_PORT)) }
+            tcpServer = ts
+            thread { try { while (true) onIncoming(Link(ts.accept())) } catch (_: Exception) {} }
+        } catch (_: Exception) { return }
+        // يردّ على بحث الضيوف عن الغرف (UDP broadcast)
+        try {
+            val s = DatagramSocket(null as SocketAddress?).apply { reuseAddress = true; broadcast = true; bind(InetSocketAddress(DISCOVERY_PORT)) }
+            udp = s
+            thread {
+                val buf = ByteArray(256)
+                try {
+                    while (true) {
+                        val p = DatagramPacket(buf, buf.size)
+                        s.receive(p)
+                        if (String(p.data, 0, p.length) == "HANDREMMY?" && engine == null) {
+                            val reply = "HANDREMMY|$myName|$WIFI_PORT|${lobby.size}".toByteArray()
+                            s.send(DatagramPacket(reply, reply.size, p.address, p.port))
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun closeServers() {
+        try { server?.close() } catch (_: Exception) {}
+        try { tcpServer?.close() } catch (_: Exception) {}
+        try { udp?.close() } catch (_: Exception) {}
+        server = null; tcpServer = null; udp = null
+    }
+
+    /** عنوان الجهاز على شبكة الواي فاي / الهوتسبوت */
+    private fun localIp(): String? = try {
+        (NetworkInterface.getNetworkInterfaces()?.toList() ?: emptyList())
+            .filter { it.isUp && !it.isLoopback }
+            .flatMap { it.interfaceAddresses.map { ia -> ia.address } }
+            .filterIsInstance<Inet4Address>()
+            .firstOrNull { it.isSiteLocalAddress }?.hostAddress
+    } catch (_: Exception) { null }
+
+    private fun broadcastTargets(): List<InetAddress> {
+        val out = mutableListOf<InetAddress>(InetAddress.getByName("255.255.255.255"))
+        try {
+            for (ni in NetworkInterface.getNetworkInterfaces()?.toList() ?: emptyList()) {
+                if (!ni.isUp || ni.isLoopback) continue
+                for (ia in ni.interfaceAddresses) ia.broadcast?.let { if (it !in out) out.add(it) }
+            }
+        } catch (_: Exception) {}
+        return out
     }
 
     private fun onIncoming(link: Link) {
@@ -146,7 +235,7 @@ class Controller {
     fun startGame() {
         val nb = effectiveBots()
         if (lobby.size + nb < 2) return
-        try { server?.close() } catch (_: Exception) {}
+        closeServers()
         val humans = lobby.mapIndexed { i, n -> Player(i, n) }
         val bots = List(nb) { Player(lobby.size + it, botName(it), isBot = true) }
         val e = Engine(humans + bots, rounds)
@@ -241,13 +330,64 @@ class Controller {
                 adapter?.cancelDiscovery()
                 val s = d.createRfcommSocketToServiceRecord(APP_UUID)
                 s.connect()
-                val l = Link(s); clientLink = l
-                main.post { msg = ""; screen = "clientLobby" }
-                l.send(JSONObject().put("t", "join").put("name", myName))
-                l.readLoop({ m -> main.post { onServerMsg(m) } }, {
-                    main.post { if (screen != "menu") { msg = "انقطع الاتصال"; reset() } }
-                })
+                onConnected(Link(s))
             } catch (e: Exception) { main.post { msg = "فشل الاتصال — تأكد أن المضيف فتح الاستضافة" } }
+        }
+    }
+
+    /** الانضمام عبر الواي فاي إلى عنوان المضيف */
+    fun connectWifi(ip: String, port: Int = WIFI_PORT) {
+        isHost = false; msg = "جارٍ الاتصال..."
+        thread {
+            try {
+                val s = Socket()
+                s.connect(InetSocketAddress(ip.trim(), port), 4000)
+                onConnected(Link(s))
+            } catch (e: Exception) { main.post { msg = "فشل الاتصال بالمضيف — تأكد أنكما على نفس الراوتر" } }
+        }
+    }
+
+    private fun onConnected(l: Link) {
+        clientLink = l
+        main.post { msg = ""; screen = "clientLobby" }
+        l.send(JSONObject().put("t", "join").put("name", myName))
+        l.readLoop({ m -> main.post { onServerMsg(m) } }, {
+            main.post { if (screen != "menu") { msg = "انقطع الاتصال"; reset() } }
+        })
+    }
+
+    fun openWifiJoin() { screen = "joinWifi"; scanWifi() }
+
+    /** يبحث 5 ثوانٍ عن غرف على نفس الشبكة */
+    fun scanWifi() {
+        if (scanning) return
+        scanning = true; wifiHosts.clear()
+        thread {
+            try {
+                val s = DatagramSocket().apply { broadcast = true; soTimeout = 600 }
+                val req = "HANDREMMY?".toByteArray()
+                val targets = broadcastTargets()
+                val end = System.currentTimeMillis() + 5000
+                var lastSend = 0L
+                val buf = ByteArray(256)
+                while (System.currentTimeMillis() < end) {
+                    if (System.currentTimeMillis() - lastSend > 1000) {
+                        for (t in targets) try { s.send(DatagramPacket(req, req.size, t, DISCOVERY_PORT)) } catch (_: Exception) {}
+                        lastSend = System.currentTimeMillis()
+                    }
+                    try {
+                        val p = DatagramPacket(buf, buf.size)
+                        s.receive(p)
+                        val f = String(p.data, 0, p.length).split("|")
+                        if (f.size >= 4 && f[0] == "HANDREMMY") {
+                            val h = WifiHost(f[1], p.address.hostAddress ?: "", f[2].toIntOrNull() ?: WIFI_PORT, f[3].toIntOrNull() ?: 1)
+                            main.post { if (wifiHosts.none { it.ip == h.ip }) wifiHosts.add(h) }
+                        }
+                    } catch (_: SocketTimeoutException) {}
+                }
+                s.close()
+            } catch (_: Exception) {}
+            main.post { scanning = false }
         }
     }
 
@@ -352,7 +492,7 @@ class Controller {
     fun reset() {
         engine = null; ui = null; order.clear(); lobby.clear(); groups.clear(); fresh.clear()
         fxEvents.clear(); hits.clear(); laughs.clear(); centers.clear(); peek = null; fxSeen = 0; orders.clear()
-        try { server?.close() } catch (_: Exception) {}
+        closeServers(); wifiHosts.clear(); scanning = false; wifiIp = null
         links.values.forEach { it.close() }; links.clear()
         clientLink?.close(); clientLink = null
         botPending = false

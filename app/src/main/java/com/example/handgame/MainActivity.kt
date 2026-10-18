@@ -14,13 +14,17 @@ import androidx.activity.result.contract.ActivityResultContracts
 class MainActivity : ComponentActivity() {
     private val c = Controller()
     private var pending: (() -> Unit)? = null
+    private var onDenied: (() -> Unit)? = null
 
     private val permLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         val next = pending; pending = null
-        if (it.values.all { ok -> ok }) next?.invoke() else c.msg = "الصلاحيات مطلوبة للبلوتوث"
+        val denied = onDenied; onDenied = null
+        if (it.values.all { ok -> ok }) next?.invoke()
+        else if (denied != null) denied()      // المضيف يكمل بالواي فاي حتى بدون صلاحية البلوتوث
+        else c.msg = "الصلاحيات مطلوبة للبلوتوث"
     }
     private val discLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
-        if (r.resultCode != RESULT_CANCELED) c.beginListening()
+        c.beginListening()      // حتى لو رفض إظهار البلوتوث، تبقى الاستضافة عبر الواي فاي
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -33,20 +37,25 @@ class MainActivity : ComponentActivity() {
         setContent { App(c, onHost = ::host, onJoin = ::join) }
     }
 
-    private fun ensure(next: () -> Unit) {
+    private fun ensure(denied: (() -> Unit)? = null, next: () -> Unit) {
         val need = if (Build.VERSION.SDK_INT >= 31)
             listOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_ADVERTISE)
         else emptyList()
         val miss = need.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
-        if (miss.isEmpty()) next() else { pending = next; permLauncher.launch(miss.toTypedArray()) }
+        if (miss.isEmpty()) next() else { pending = next; onDenied = denied; permLauncher.launch(miss.toTypedArray()) }
     }
 
-    private fun host() = ensure {
-        // يطلب تفعيل البلوتوث + جعل الجهاز مرئياً لمدة 5 دقائق
-        discLauncher.launch(
-            Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE)
-                .putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300)
-        )
+    private fun host() {
+        if (BluetoothAdapter.getDefaultAdapter() == null) { c.beginListening(); return }   // جهاز بلا بلوتوث: واي فاي فقط
+        ensure(denied = { c.beginListening() }) {
+            // يطلب تفعيل البلوتوث + جعل الجهاز مرئياً لمدة 5 دقائق (والواي فاي يعمل في كل الأحوال)
+            try {
+                discLauncher.launch(
+                    Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE)
+                        .putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300)
+                )
+            } catch (_: Exception) { c.beginListening() }
+        }
     }
 
     private fun join() = ensure { c.openJoin() }

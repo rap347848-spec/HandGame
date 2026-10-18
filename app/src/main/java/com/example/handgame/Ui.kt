@@ -102,6 +102,7 @@ fun App(c: Controller, onHost: () -> Unit, onJoin: () -> Unit) {
                     "menu" -> Menu(c, onHost, onJoin)
                     "hostLobby", "clientLobby" -> Lobby(c)
                     "join" -> JoinList(c)
+                    "joinWifi" -> JoinWifi(c)
                     "table" -> Table(c)
                 }
                 FxLayer(c)
@@ -284,8 +285,9 @@ fun Menu(c: Controller, onHost: () -> Unit, onJoin: () -> Unit) {
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Box(Modifier.weight(1f)) { Pill("استضافة لعبة", Color(0xFF2E7D32), big = true, onClick = onHost) }
-                Box(Modifier.weight(1f)) { Pill("انضمام للعبة", Color(0xFF1565C0), big = true, onClick = onJoin) }
+                Box(Modifier.weight(1f)) { Pill("انضمام بلوتوث", Color(0xFF1565C0), big = true, onClick = onJoin) }
             }
+            Pill("انضمام عبر الواي فاي (نفس الراوتر)", Color(0xFF00897B), big = true) { c.openWifiJoin() }
         }
     }
 }
@@ -310,7 +312,12 @@ fun Lobby(c: Controller) {
         }
         Spacer(Modifier.weight(1f))
         if (c.isHost) {
-            Text("على اللاعبين الآخرين اختيار جوالك من «انضمام للعبة» (بعد الاقتران بالبلوتوث)", color = Color.White, fontSize = 12.sp, textAlign = TextAlign.Center)
+            Text("بلوتوث: يختار الآخرون جوالك من «انضمام بلوتوث» بعد الاقتران", color = Color.White, fontSize = 12.sp, textAlign = TextAlign.Center)
+            Text(
+                if (c.wifiIp != null) "واي فاي: يختار الآخرون غرفتك من «انضمام عبر الواي فاي»، أو يكتبون العنوان ${c.wifiIp}"
+                else "واي فاي: اتصل بالراوتر أو شغّل الهوتسبوت ليلعب الآخرون عبره",
+                color = Color(0xFF80CBC4), fontSize = 12.sp, textAlign = TextAlign.Center
+            )
             Text("عدد البوتات", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 for (b in 0..3) FilterChip(
@@ -321,6 +328,33 @@ fun Lobby(c: Controller) {
             Pill("ابدأ اللعبة (${c.rounds} جولات)", Color(0xFF2E7D32), enabled = c.lobby.size + c.effectiveBots() >= 2, big = true) { c.startGame() }
         } else Text("بانتظار المضيف ليبدأ اللعبة...", color = Color.White)
         Pill("خروج", Color(0xFF6D4C41)) { c.reset() }
+    }
+}
+
+@Composable
+fun JoinWifi(c: Controller) {
+    var ip by remember { mutableStateOf("") }
+    Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("الانضمام عبر الواي فاي", fontSize = 22.sp, color = Gold, fontWeight = FontWeight.Bold)
+        Text(
+            when {
+                c.wifiHosts.isNotEmpty() -> "اختر الغرفة:"
+                c.scanning -> "جارٍ البحث عن غرف على نفس الراوتر..."
+                else -> "لم تظهر أي غرفة. تأكد أنكما على نفس الراوتر، أو اكتب عنوان المضيف."
+            }, color = Color.White
+        )
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            itemsIndexed(c.wifiHosts) { _, h -> Pill("${h.name} (${h.players}/4)", Color(0xFF00897B)) { c.connectWifi(h.ip, h.port) } }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(ip, { ip = it }, label = { Text("عنوان المضيف مثل 192.168.1.5") }, singleLine = true, modifier = Modifier.weight(1f))
+            Pill("اتصال", Color(0xFF2E7D32), enabled = ip.isNotBlank()) { c.connectWifi(ip) }
+        }
+        Spacer(Modifier.weight(1f))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Pill("بحث من جديد", Color(0xFF1565C0), enabled = !c.scanning) { c.scanWifi() }
+            Pill("رجوع", Color(0xFF6D4C41)) { c.reset() }
+        }
     }
 }
 
@@ -501,25 +535,33 @@ fun Table(c: Controller) {
     val stagedIds = staged.flatten().toSet()
     val stagedPts = staged.sumOf { Melds.value(it).coerceAtLeast(0) }
 
-    // المحدد يُقسَّم حسب المجموعات المكوّنة: كل مجموعة كاملة نزولٌ مستقل، والباقي نزول واحد
-    val chosen = selected.toSet()
+    // المجموعات المكوّنة السليمة تُحسب وتنزل تلقائياً مثل «+ مجموعة» (تُفك بزر «فك التكوين»)
+    val formedValid = c.groups.filter { g -> s.hand.containsAll(g) && Melds.value(g) >= 0 && g.none { it in stagedIds } }
+    val formedIds = formedValid.flatten().toSet()
+    val formedPts = formedValid.sumOf { Melds.value(it) }
+
+    // باقي المحدد (غير المكوَّن السليم): كل مجموعة مكوّنة كاملة نزولٌ مستقل، والباقي نزول واحد
+    val selSet = selected.toSet()
+    val selFree = selected.filter { it !in formedIds }
+    val chosen = selFree.toSet()
     val parts: List<List<Int>> = run {
         val full = c.groups.filter { chosen.containsAll(it) }
         val used = full.flatten().toSet()
-        val rest = selected.filter { it !in used }
+        val rest = selFree.filter { it !in used }
         full + (if (rest.isNotEmpty()) listOf(rest) else emptyList())
     }
     val partsValid = parts.isNotEmpty() && parts.all { Melds.value(it) >= 0 }
+    val selOk = selFree.isEmpty() || partsValid
     val selPts = if (partsValid) parts.sumOf { Melds.value(it) } else 0
-    val rawSel = selected.sumOf { Cards.points(it) }
-    val total = stagedPts + selPts
-    val shown = stagedPts + if (partsValid) selPts else rawSel
-    val handSet = stagedIds + (if (partsValid) chosen else emptySet())
-    val canHand = myTurn && !meP.laid && total >= 51 && (selected.isEmpty() || partsValid) && handSet.isNotEmpty() && s.hand.size - handSet.size <= 1
-    val canLay = myTurn && (selected.isEmpty() || partsValid) && (if (!meP.laid) total >= 51 else (staged.isNotEmpty() || partsValid))
+    val rawSel = selFree.sumOf { Cards.points(it) }
+    val total = stagedPts + formedPts + selPts
+    val shown = stagedPts + formedPts + if (partsValid) selPts else rawSel
+    val handSet = stagedIds + formedIds + (if (partsValid) chosen else emptySet())
+    val canHand = myTurn && !meP.laid && total >= 51 && selOk && handSet.isNotEmpty() && s.hand.size - handSet.size <= 1
+    val canLay = myTurn && selOk && (if (!meP.laid) total >= 51 else (staged.isNotEmpty() || formedValid.isNotEmpty() || partsValid))
 
     fun sendMeld() {
-        val g = staged.toList() + (if (partsValid) parts else emptyList())
+        val g = staged.toList() + formedValid + (if (partsValid) parts else emptyList())
         c.send(JSONObject().put("t", "meld").put("groups", JSONArray(g.map { JSONArray(it) })))
         staged.clear(); selected.clear()
     }
@@ -661,7 +703,7 @@ fun Table(c: Controller) {
                     Pill("شبشب على ${tp.name}", Color(0xFFEF6C00)) { c.send(JSONObject().put("t", "throw").put("to", tp.id).put("kind", "slipper")); throwTo = null }
                     Pill("✕", Color(0xFF6D4C41)) { throwTo = null }
                 }
-                if (staged.isNotEmpty() || selected.isNotEmpty()) {
+                if (staged.isNotEmpty() || selected.isNotEmpty() || formedValid.isNotEmpty()) {
                     val ok = shown >= 51 && !meP.laid
                     Text(
                         "المجموع: $shown", color = if (ok) Good else Gold, fontWeight = FontWeight.Black, fontSize = 15.sp,
@@ -671,7 +713,7 @@ fun Table(c: Controller) {
               }
               Row(Modifier.padding(start = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 // تكوين / فك التكوين (داخل اليد بدون إنزال)
-                if (selected.size >= 2 && c.groups.none { it.toSet() == chosen }) Pill("تكوين", Color(0xFF00897B)) { c.formGroup(selected.toList()); selected.clear() }
+                if (selected.size >= 2 && c.groups.none { it.toSet() == selSet }) Pill("تكوين", Color(0xFF00897B)) { c.formGroup(selected.toList()); selected.clear() }
                 if (selected.any { id -> c.groups.any { id in it } }) Pill("فك التكوين", Color(0xFF8D6E63)) { c.ungroupCards(selected.toList()); selected.clear() }
                 if (myTurn && partsValid && parts.size == 1) Pill("+ مجموعة", Color(0xFF5E35B1)) { staged.addAll(parts); selected.clear() }
                 if (staged.isNotEmpty()) Pill("إلغاء", Color(0xFF6D4C41)) { staged.clear() }
@@ -705,6 +747,26 @@ fun Hand(
     val discardNow = rememberUpdatedState(onDiscard)
     val dropNow = rememberUpdatedState(onDrop)
     var origin by remember { mutableStateOf(Offset.Zero) }
+
+    // لكل مجموعة مكوّنة لونها الخاص، ويبقى لونها ثابتاً ما دامت قائمة (لا يتغير بفك مجموعة أخرى)
+    val gColor = remember { mutableStateMapOf<Int, Int>() }
+    val groupsSnap = c.groups.toList()
+    LaunchedEffect(groupsSnap) {
+        val inGroup = groupsSnap.flatten().toSet()
+        gColor.keys.filter { it !in inGroup }.forEach { gColor.remove(it) }
+        val taken = mutableSetOf<Int>()
+        val pending = mutableListOf<List<Int>>()
+        for (g in groupsSnap) {
+            val have = g.mapNotNull { gColor[it] }.distinct()
+            if (have.size == 1 && have[0] !in taken && g.all { gColor[it] == have[0] }) taken.add(have[0]) else pending.add(g)
+        }
+        for (g in pending) {
+            var idx = (0 until GroupColors.size).firstOrNull { it !in taken } ?: (taken.size % GroupColors.size)
+            taken.add(idx)
+            g.forEach { gColor[it] = idx }
+        }
+    }
+
     BoxWithConstraints(
         Modifier.fillMaxWidth().height(if (rowsCount == 2) 112.dp else 84.dp).onGloballyPositioned { origin = it.positionInRoot() }
     ) {
@@ -712,14 +774,33 @@ fun Hand(
         val ch = 66.dp
         val rowH = 34.dp
         val perRow = if (rowsCount == 2) maxOf(7, (n + 1) / 2) else maxOf(1, n)
-        val step = minOf(cw * 0.84f, (maxWidth - cw) / maxOf(1, perRow - 1))
         val d = LocalDensity.current
-        val stepPx = with(d) { step.toPx() }
         val rowPx = with(d) { rowH.toPx() }
         val raisePx = with(d) { 12.dp.toPx() }
         val cwPx = with(d) { cw.toPx() }
         val chPx = with(d) { ch.toPx() }
-        val startPx = (with(d) { maxWidth.toPx() } - (stepPx * (perRow - 1) + cwPx)) / 2f
+        val gapPx = with(d) { 14.dp.toPx() }
+        val widthPx = with(d) { maxWidth.toPx() }
+
+        // كل مجموعة منعزلة عن غيرها: فراغ بين الورق المكوّن والذي بجانبه من مجموعة أخرى
+        val gid = c.order.map { id -> c.groups.indexOfFirst { id in it } }
+        val extra = FloatArray(maxOf(n, 1))
+        val rowGap = FloatArray(maxOf(1, (n + perRow - 1) / perRow))
+        var acc = 0f
+        for (i in 0 until n) {
+            val col = i % perRow
+            if (col == 0) acc = 0f
+            else if (gid[i] != gid[i - 1] && (gid[i] >= 0 || gid[i - 1] >= 0)) acc += gapPx
+            extra[i] = acc
+            rowGap[i / perRow] = acc
+        }
+        val maxGap = rowGap.maxOrNull() ?: 0f
+        val stepPx = if (perRow <= 1) cwPx else minOf(cwPx * 0.84f, (widthPx - cwPx - maxGap) / (perRow - 1))
+        fun rowStart(row: Int): Float {
+            val cols = minOf(perRow, n - row * perRow).coerceAtLeast(1)
+            return (widthPx - (stepPx * (cols - 1) + rowGap[row] + cwPx)) / 2f
+        }
+
         c.order.forEachIndexed { i, id ->
             key(id) {
                 var dx by remember { mutableFloatStateOf(0f) }
@@ -731,11 +812,12 @@ fun Hand(
                 val bColor: Color? = when {
                     id == takenId -> Color(0xFFFFEB3B)
                     id in c.fresh -> Color(0xFF00E5FF)
-                    else -> c.groups.indexOfFirst { id in it }.let { gi -> if (gi >= 0) GroupColors[gi % GroupColors.size] else null }
+                    else -> gColor[id]?.let { GroupColors[it % GroupColors.size] }
                 }
+                val baseX = rowStart(row) + col * stepPx + extra[i]
                 Box(
                     Modifier
-                        .offset { IntOffset((startPx + col * stepPx + dx).roundToInt(), (row * rowPx + (if (sel) 0f else raisePx) + dy).roundToInt()) }
+                        .offset { IntOffset((baseX + dx).roundToInt(), (row * rowPx + (if (sel) 0f else raisePx) + dy).roundToInt()) }
                         .zIndex(if (drag) 100f else (row * 30 + col).toFloat())
                         .pointerInput(id, stagedIds) {
                             detectTapGestures(
@@ -755,7 +837,7 @@ fun Hand(
                                 onDragStart = { drag = true },
                                 onDragEnd = {
                                     val center = Offset(
-                                        origin.x + startPx + col * stepPx + dx + cwPx / 2,
+                                        origin.x + baseX + dx + cwPx / 2,
                                         origin.y + row * rowPx + (if (id in selected) 0f else raisePx) + dy + chPx / 2
                                     )
                                     val handled = dropNow.value(id, center)
