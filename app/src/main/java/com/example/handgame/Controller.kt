@@ -65,7 +65,10 @@ class Link(inS: InputStream, outS: OutputStream, private val closer: () -> Unit)
 /** غرفة وجدناها على نفس الشبكة */
 class WifiHost(val name: String, val ip: String, val port: Int, val players: Int)
 
-class PInfo(val id: Int, val name: String, val n: Int, val total: Int, val laid: Boolean, val delta: Int, val hist: List<Int>)
+class PInfo(
+    val id: Int, val name: String, val n: Int, val total: Int, val laid: Boolean, val delta: Int, val hist: List<Int>,
+    val wh: Int = 0, val bot: Boolean = false, val hands: Int = 0, val jokers: Int = 0, val throws: Int = 0
+)
 
 class UiState(
     val me: Int, val round: Int, val rounds: Int, val turn: Int, val drew: Boolean, val sec: Int,
@@ -111,6 +114,51 @@ class Controller {
     val centers = mutableStateMapOf<Int, Offset>() // مواضع الأفاتارات على الشاشة
     var peek by mutableStateOf<Pair<Int, List<Int>>?>(null)  // كشف ورق خصم (5 ثوانٍ)
     var isHost = false
+
+    // ---- سجل الفوز (محفوظ على الجوال) ----
+    var winsHalf by mutableIntStateOf(0)                   // انتصارات × 2
+    var onRecord: ((Int) -> Unit)? = null
+    var lastGain by mutableStateOf<String?>(null)          // «+1 فوز، ترقّيت إلى مستوى N» في نهاية اللعبة
+    val reacts = mutableStateMapOf<Int, Pair<Int, String>>() // تفاعلات سريعة طائرة فوق الأفاتار
+    private val h2h = mutableMapOf<String, IntArray>()       // سجل المواجهات بين الأصدقاء (اسم الخصم → فوزي، خسارتي)
+    var onH2h: ((String) -> Unit)? = null
+    private var recordedGid = 0
+    private val recs = mutableMapOf<Int, Int>()              // سجل اللاعبين الذين انضموا (للمضيف)
+
+    fun loadH2h(s: String) {
+        try { val o = JSONObject(s); for (k in o.keys()) { val a = o.getJSONArray(k); h2h[k] = intArrayOf(a.getInt(0), a.getInt(1)) } } catch (_: Exception) {}
+    }
+    fun h2hOf(name: String): IntArray = h2h[name] ?: intArrayOf(0, 0)
+    private fun saveH2h() {
+        val o = JSONObject(); for ((k, v) in h2h) o.put(k, JSONArray(listOf(v[0], v[1]))); onH2h?.invoke(o.toString())
+    }
+
+    /** نهاية اللعبة: فوز كامل إن كان معي لاعب حقيقي، ونصف فوز إن كان الخصوم بوتات فقط */
+    private fun recordGame(st: UiState) {
+        val me = st.players.firstOrNull { it.id == st.me } ?: return
+        val minTotal = st.players.minOf { it.total }
+        val iWon = me.total == minTotal
+        val humans = st.players.count { !it.bot }
+        val gain = if (iWon) (if (humans >= 2) 2 else 1) else 0
+        val old = Progress.level(winsHalf)
+        if (gain > 0) {
+            winsHalf += gain
+            val lv = Progress.level(winsHalf)
+            lastGain = "+" + (if (gain == 2) "1" else "0.5") + " فوز" + (if (lv > old) " • ترقّيت إلى مستوى $lv 🎉" else "")
+            onRecord?.invoke(winsHalf)
+            if (isHost) engine?.players?.getOrNull(0)?.winsHalf = winsHalf
+            else clientLink?.send(JSONObject().put("t", "rec").put("wh", winsHalf))
+        }
+        if (humans >= 2) {
+            for (p in st.players) {
+                if (p.bot || p.id == me.id) continue
+                val won = iWon && p.total != minTotal
+                val lost = !iWon && p.total == minTotal
+                if (won || lost) { val a = h2h.getOrPut(p.name) { IntArray(2) }; if (won) a[0]++ else a[1]++ }
+            }
+            saveH2h()
+        }
+    }
 
     private var engine: Engine? = null
     private val links = mutableMapOf<Int, Link>()
@@ -216,6 +264,7 @@ class Controller {
                     } else {
                         pid = lobby.size
                         lobby.add(m.optString("name", "لاعب"))
+                        recs[pid] = m.optInt("wh", 0)
                         links[pid] = link
                         link.send(JSONObject().put("t", "joined").put("id", pid))
                         sendLobby()
@@ -236,7 +285,7 @@ class Controller {
         val nb = effectiveBots()
         if (lobby.size + nb < 2) return
         closeServers()
-        val humans = lobby.mapIndexed { i, n -> Player(i, n) }
+        val humans = lobby.mapIndexed { i, n -> Player(i, n).also { it.winsHalf = if (i == 0) winsHalf else recs[i] ?: 0 } }
         val bots = List(nb) { Player(lobby.size + it, botName(it), isBot = true) }
         val e = Engine(humans + bots, rounds)
         e.startRound(); engine = e
@@ -272,7 +321,7 @@ class Controller {
 
     /** لعبة جديدة بنفس اللاعبين والبوتات وعدد الجولات */
     private fun restart(old: Engine) {
-        val e = Engine(old.players.map { Player(it.id, it.name, it.isBot) }, old.totalRounds)
+        val e = Engine(old.players.map { p -> Player(p.id, p.name, p.isBot).also { it.winsHalf = p.winsHalf } }, old.totalRounds)
         e.startRound(); engine = e; orders.clear()
     }
 
@@ -293,6 +342,8 @@ class Controller {
                 "discard" -> e.discardCard(pid, m.getInt("card"))
                 "throw" -> e.throwAt(pid, m.getInt("to"), m.getString("kind"))
                 "peek" -> { handlePeek(e, pid, m.getInt("to")); null }
+                "react" -> e.react(pid, m.optString("e"))
+                "rec" -> { e.players.getOrNull(pid)?.winsHalf = m.optInt("wh", 0); null }
                 "order" -> { val a = m.getJSONArray("ids"); orders[pid] = List(a.length()) { a.getInt(it) }; null }
                 "newgame" -> { if (e.roundOver && e.gameOver) restart(e); null }
                 "next" -> { if (pid == 0 && e.roundOver && !e.gameOver) e.startRound(); null }
@@ -350,7 +401,7 @@ class Controller {
     private fun onConnected(l: Link) {
         clientLink = l
         main.post { msg = ""; screen = "clientLobby" }
-        l.send(JSONObject().put("t", "join").put("name", myName))
+        l.send(JSONObject().put("t", "join").put("name", myName).put("wh", winsHalf))
         l.readLoop({ m -> main.post { onServerMsg(m) } }, {
             main.post { if (screen != "menu") { msg = "انقطع الاتصال"; reset() } }
         })
@@ -411,7 +462,12 @@ class Controller {
         val ps = List(pa.length()) {
             val o = pa.getJSONObject(it)
             val h = o.getJSONArray("hist")
-            PInfo(o.getInt("id"), o.getString("name"), o.getInt("n"), o.getInt("total"), o.getBoolean("laid"), o.getInt("delta"), List(h.length()) { k -> h.getInt(k) })
+            val sa = o.optJSONArray("st")
+            PInfo(
+                o.getInt("id"), o.getString("name"), o.getInt("n"), o.getInt("total"), o.getBoolean("laid"), o.getInt("delta"),
+                List(h.length()) { k -> h.getInt(k) }, o.optInt("wh", 0), o.optBoolean("bot", false),
+                sa?.optInt(0) ?: 0, sa?.optInt(1) ?: 0, sa?.optInt(2) ?: 0
+            )
         }
         val hand = ints(v.getJSONArray("hand"))
         val prev = ui
@@ -424,6 +480,8 @@ class Controller {
             v.getInt("dby"), v.getInt("rw"), v.getBoolean("hw"), v.getInt("taken"), v.getInt("gid")
         )
         ui = st
+        if (prev != null && prev.gid != st.gid) lastGain = null
+        if (st.gameOver && st.roundOver && st.gid != recordedGid) { recordedGid = st.gid; recordGame(st) }
         val sameRound = prev != null && prev.round == st.round && prev.gid == st.gid
         if (!sameRound) { order.clear(); fresh.clear(); groups.clear() }
         val added = hand.filter { it !in order }
@@ -444,6 +502,11 @@ class Controller {
         val from = f.getInt("from")
         val to = f.getInt("to")
         val kind = f.getString("kind")
+        if (kind == "react") {
+            reacts[from] = Pair(seq, f.optString("data"))
+            main.postDelayed({ if (reacts[from]?.first == seq) reacts.remove(from) }, 2200)
+            return
+        }
         if (kind == "laugh") { laugh(from, seq); return }
         fxEvents.add(FxEvent(seq, from, to, kind))
         main.postDelayed({
@@ -491,7 +554,7 @@ class Controller {
 
     fun reset() {
         engine = null; ui = null; order.clear(); lobby.clear(); groups.clear(); fresh.clear()
-        fxEvents.clear(); hits.clear(); laughs.clear(); centers.clear(); peek = null; fxSeen = 0; orders.clear()
+        fxEvents.clear(); hits.clear(); laughs.clear(); reacts.clear(); centers.clear(); peek = null; fxSeen = 0; orders.clear()
         closeServers(); wifiHosts.clear(); scanning = false; wifiIp = null
         links.values.forEach { it.close() }; links.clear()
         clientLink?.close(); clientLink = null

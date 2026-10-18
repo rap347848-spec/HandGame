@@ -42,6 +42,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
@@ -279,6 +280,8 @@ fun Menu(c: Controller, onHost: () -> Unit, onJoin: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             OutlinedTextField(c.myName, { c.rename(it) }, label = { Text("اسمك") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            val myLv = Progress.level(c.winsHalf)
+            Text("مستواك $myLv · ${Progress.title(myLv)} · انتصارات ${Progress.winsText(c.winsHalf)}", color = Gold, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             Text("عدد الجولات (يحدده المضيف)", color = Color.White, fontWeight = FontWeight.Bold)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 for (r in 1..7) FilterChip(selected = c.rounds == r, onClick = { c.rounds = r }, label = { Text("$r") })
@@ -404,10 +407,88 @@ fun Flyer(ev: FxEvent, centers: Map<Int, Offset>) {
 
 // ---------------------------------------------------------------- الطاولة
 
+private val HaloColors = listOf(
+    Color.White, Color(0xFFFFEB3B), Color(0xFFFF9800), Color(0xFF66BB6A), Color(0xFF26C6DA),
+    Color(0xFF2979FF), Color(0xFFAB47BC), Color(0xFFF06292), Color(0xFFEF5350), Color(0xFFFFC107)
+)
+
+/** هالة متوهجة حول الأفاتار: تظهر من المستوى 10، ولكل عشرة مستويات لون (والمستوى 100 قوس قزح متحرك) */
+@Composable
+fun Halo(level: Int, sz: Dp, extra: Dp = 18.dp, content: @Composable () -> Unit) {
+    val tens = (level / 10).coerceIn(0, 10)
+    if (tens == 0) { content(); return }
+    val t = rememberInfiniteTransition(label = "halo")
+    val pulse by t.animateFloat(0.88f, 1.08f, infiniteRepeatable(tween(1100), RepeatMode.Reverse), label = "hp")
+    val spin by t.animateFloat(0f, 360f, infiniteRepeatable(tween(3000, easing = LinearEasing)), label = "hs")
+    Box(contentAlignment = Alignment.Center) {
+        Canvas(Modifier.size(sz + extra)) {
+            val w = this.size.width
+            val ctr = Offset(w / 2, w / 2)
+            val col = HaloColors[tens - 1]
+            if (tens == 10) {
+                rotate(spin, ctr) {
+                    drawCircle(
+                        Brush.sweepGradient(listOf(Color.Red, Color.Yellow, Color.Green, Color.Cyan, Color.Blue, Color.Magenta, Color.Red), ctr),
+                        radius = w * 0.44f * pulse, style = Stroke(w * 0.11f)
+                    )
+                }
+            } else {
+                drawCircle(
+                    Brush.radialGradient(
+                        colorStops = arrayOf(0.58f to Color.Transparent, 0.78f to col.copy(alpha = 0.95f), 1f to Color.Transparent),
+                        center = ctr, radius = w / 2 * pulse
+                    )
+                )
+                drawCircle(col, radius = w * 0.42f * pulse, style = Stroke(w * 0.035f))
+            }
+        }
+        content()
+    }
+}
+
+/** إيموجي يطير فوق الأفاتار ثم يختفي */
+@Composable
+fun ReactBubble(seq: Int, emoji: String, modifier: Modifier) {
+    val a = remember(seq) { Animatable(0f) }
+    LaunchedEffect(seq) { a.animateTo(1f, tween(1900)) }
+    Text(
+        emoji, modifier.offset(y = (-14 - 34 * a.value).dp).graphicsLayer { alpha = 1f - a.value * 0.9f },
+        fontSize = 26.sp
+    )
+}
+
+/** بطاقة سجل اللاعب: المستوى واللقب والانتصارات والمواجهة (تختفي بعد 5 ثوانٍ) */
+@Composable
+fun RecordCard(c: Controller, p: PInfo, meId: Int) {
+    val lv = Progress.level(p.wh)
+    val tens = lv / 10
+    val edge = if (tens > 0) HaloColors[(tens - 1).coerceAtMost(9)] else Color(0x66FFFFFF)
+    Column(
+        Modifier.background(Color(0xDD1A0B3B), RoundedCornerShape(10.dp)).border(2.dp, edge, RoundedCornerShape(10.dp))
+            .padding(horizontal = 10.dp, vertical = 4.dp)
+    ) {
+        if (p.bot) {
+            Text("${p.name} — بوت (بدون سجل)", color = Color.White, fontSize = 11.sp)
+        } else {
+            Text("${p.name} · مستوى $lv · ${Progress.title(lv)}", color = Gold, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            val next = Progress.toNext(p.wh)
+            Text(
+                "انتصارات ${Progress.winsText(p.wh)}" + (if (next != null) " · للمستوى التالي ${Progress.fmt(next)}" else " · أعلى مستوى"),
+                color = Color.White, fontSize = 11.sp
+            )
+            if (p.id != meId) {
+                val h = c.h2hOf(p.name)
+                if (h[0] + h[1] > 0) Text("بينك وبينه: أنت ${h[0]} ـ ${h[1]}", color = Color(0xFF80CBC4), fontSize = 11.sp)
+            }
+        }
+    }
+}
+
 @Composable
 fun Seat(
     p: PInfo, mood: Mood, turn: Boolean, sec: Int, hit: String?, picked: Boolean,
-    onCenter: (Offset) -> Unit, onTap: () -> Unit, onSecret: () -> Unit, sz: Dp = 54.dp
+    onCenter: (Offset) -> Unit, onTap: () -> Unit, onSecret: () -> Unit, sz: Dp = 54.dp,
+    level: Int = 0, react: Pair<Int, String>? = null
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
@@ -430,15 +511,19 @@ fun Seat(
                 progress = { sec / 60f }, modifier = Modifier.size(sz + 10.dp),
                 color = if (sec <= 10) Color.Red else Gold, trackColor = Color(0x33FFFFFF), strokeWidth = 3.dp
             )
-            Box(Modifier.then(if (picked) Modifier.border(3.dp, Color(0xFFFF5252), CircleShape) else Modifier)) {
-                Avatar(p.id, mood, sz, hit)
+            Halo(level, sz) {
+                Box(Modifier.then(if (picked) Modifier.border(3.dp, Color(0xFFFF5252), CircleShape) else Modifier)) {
+                    Avatar(p.id, mood, sz, hit)
+                }
             }
             Box(Modifier.align(Alignment.BottomEnd).background(Color(0xFFE53935), CircleShape).padding(horizontal = 5.dp, vertical = 1.dp)) {
                 Text("${p.n}", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
+            if (react != null) ReactBubble(react.first, react.second, Modifier.align(Alignment.TopCenter))
         }
         Text(
-            p.name + if (turn) " · $sec" else "", color = Color.White, fontSize = 11.sp, maxLines = 1,
+            p.name + (if (!p.bot && level > 0) "  ★$level" else "") + if (turn) " · $sec" else "",
+            color = Color.White, fontSize = 11.sp, maxLines = 1,
             modifier = Modifier.background(Color(0x99000000), RoundedCornerShape(6.dp)).padding(horizontal = 6.dp)
         )
     }
@@ -529,6 +614,9 @@ fun Table(c: Controller) {
     val staged = remember { mutableStateListOf<List<Int>>() }
     var twoRows by remember { mutableStateOf(true) }
     var throwTo by remember { mutableStateOf<Int?>(null) }
+    var recFor by remember { mutableStateOf<Int?>(null) }          // سجل لاعب يظهر 5 ثوانٍ
+    var showReacts by remember { mutableStateOf(false) }
+    LaunchedEffect(recFor) { if (recFor != null) { delay(5000); recFor = null } }
     val meldRects = remember { mutableMapOf<Int, Rect>() }
     val feltRect = remember { arrayOfNulls<Rect>(1) }
     LaunchedEffect(s.hand) {
@@ -617,8 +705,9 @@ fun Table(c: Controller) {
                         Seat(
                             p, moodFor(c, s.players, p.id), p.id == s.turn, s.sec, c.hits[p.id]?.kind, throwTo == p.id,
                             onCenter = { c.centers[p.id] = it },
-                            onTap = { throwTo = if (throwTo == p.id) null else p.id },
-                            onSecret = { c.send(JSONObject().put("t", "peek").put("to", p.id)) }
+                            onTap = { val on = throwTo != p.id; throwTo = if (on) p.id else null; recFor = if (on) p.id else null },
+                            onSecret = { c.send(JSONObject().put("t", "peek").put("to", p.id)) },
+                            level = if (p.bot) 0 else Progress.level(p.wh), react = c.reacts[p.id]
                         )
                     }
                 }
@@ -688,20 +777,24 @@ fun Table(c: Controller) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically
               ) {
                 Box(
-                    Modifier.onGloballyPositioned { c.centers[s.me] = it.boundsInRoot().center },
+                    Modifier.onGloballyPositioned { c.centers[s.me] = it.boundsInRoot().center }
+                        .clickable { throwTo = null; recFor = if (recFor == s.me) null else s.me },
                     contentAlignment = Alignment.Center
                 ) {
                     if (myTurn) CircularProgressIndicator(
                         progress = { s.sec / 60f }, modifier = Modifier.size(44.dp),
                         color = if (s.sec <= 10) Color.Red else Gold, trackColor = Color(0x33FFFFFF), strokeWidth = 3.dp
                     )
-                    Avatar(s.me, moodFor(c, s.players, s.me), 36.dp, c.hits[s.me]?.kind)
+                    Halo(Progress.level(meP.wh), 36.dp, extra = 8.dp) { Avatar(s.me, moodFor(c, s.players, s.me), 36.dp, c.hits[s.me]?.kind) }
+                    c.reacts[s.me]?.let { ReactBubble(it.first, it.second, Modifier.align(Alignment.TopCenter)) }
                 }
                 Column {
                     Text(meP.name, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     Text(if (myTurn) "⏱ ${s.sec}" else "${meP.total} نقطة", color = if (myTurn && s.sec <= 10) Color.Red else Gold, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
                 // خيارات الرمي بجانب أفاتارك
+                val rp = recFor?.let { id -> s.players.firstOrNull { it.id == id } }
+                if (rp != null) RecordCard(c, rp, s.me)
                 val tp = throwTo?.let { id -> s.players.firstOrNull { it.id == id } }
                 if (tp != null && tp.id != s.me) {
                     Pill("🥚 بيض على ${tp.name}", Color(0xFFF9A825)) { c.send(JSONObject().put("t", "throw").put("to", tp.id).put("kind", "egg")); throwTo = null }
@@ -728,6 +821,7 @@ fun Table(c: Controller) {
                     Box(Modifier.graphicsLayer { scaleX = pulse; scaleY = pulse }) { Pill("هاند", Color(0xFFF9A825), big = true) { sendMeld() } }
                 } else if (canLay) Pill("نزّل", Color(0xFF2E7D32), big = true) { sendMeld() }
                 if (myTurn && s.drew && selected.size == 1 && s.taken < 0) Pill("ارمِ", Color(0xFFC62828)) { discard(selected[0]) }
+                Pill("😀", Color(0xFF455A64)) { showReacts = !showReacts }
                 Pill(if (twoRows) "سطر واحد" else "سطرين", Color(0xFF455A64)) { twoRows = !twoRows }
               }
             }
@@ -735,6 +829,15 @@ fun Table(c: Controller) {
             Hand(c, selected, stagedIds, s.taken, twoRows, ::discard, ::dropCard)
         }
 
+        if (showReacts) Row(
+            Modifier.align(Alignment.BottomStart).padding(start = 8.dp, bottom = 122.dp).zIndex(20f)
+                .background(Color(0xE61A0B3B), RoundedCornerShape(14.dp)).padding(horizontal = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            listOf("😂", "👏", "😡", "🔥", "😎", "🤝").forEach { em ->
+                Text(em, Modifier.clickable { c.send(JSONObject().put("t", "react").put("e", em)); showReacts = false }.padding(6.dp), fontSize = 26.sp)
+            }
+        }
         ScoreBoard(s, Modifier.align(Alignment.TopEnd).padding(6.dp).zIndex(10f))
         Text("هاند · $CREDIT", Modifier.align(Alignment.TopStart).padding(8.dp), color = Color(0x88FFFFFF), fontSize = 10.sp)
         if (s.roundOver) { if (s.gameOver) FinalScene(c, s) else RoundOver(c, s) }
@@ -897,11 +1000,30 @@ fun RoundOver(c: Controller, s: UiState) {
 fun FinalScene(c: Controller, s: UiState) {
     val loser = finalLoser(s.players) ?: return
     val winner = finalWinner(s.players)?.takeIf { it.id != loser.id } ?: s.players.first { it.id != loser.id }
+    // جوائز ممتعة من اللعبة نفسها
+    val awards = buildList {
+        fun top(label: String, sel: (PInfo) -> Int) {
+            val mx = s.players.maxOf(sel)
+            if (mx > 0) add("$label: " + s.players.filter { sel(it) == mx }.joinToString("، ") { it.name } + " ($mx)")
+        }
+        top("🏆 أكثر من أعلن هاند") { it.hands }
+        top("🃏 ملك الجوكر") { it.jokers }
+        top("🥚 ملك الرمي") { it.throws }
+    }
+    // سجل المواجهات بينك وبين أصدقائك
+    val duels = s.players.filter { !it.bot && it.id != s.me }.mapNotNull { p ->
+        val h = c.h2hOf(p.name)
+        if (h[0] + h[1] > 0) "${p.name}: أنت ${h[0]} ـ ${h[1]}" else null
+    }
     Box(Modifier.fillMaxSize().background(Color(0xCC000000)).clickable(enabled = false) {}, contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("انتهت اللعبة", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            Text("الفائز: ${winner.name}", color = Gold, fontSize = 26.sp, fontWeight = FontWeight.Black)
-            Row(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.Bottom) {
+        Column(
+            Modifier.verticalScroll(rememberScrollState()).padding(vertical = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text("انتهت اللعبة", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Text("الفائز: ${winner.name}", color = Gold, fontSize = 24.sp, fontWeight = FontWeight.Black)
+            c.lastGain?.let { Text(it, color = Good, fontSize = 15.sp, fontWeight = FontWeight.Black) }
+            Row(horizontalArrangement = Arrangement.spacedBy(22.dp), verticalAlignment = Alignment.Bottom) {
                 s.players.sortedBy { it.total }.forEach { p ->
                     val isLoser = p.id == loser.id
                     val mood = when {
@@ -910,22 +1032,26 @@ fun FinalScene(c: Controller, s: UiState) {
                         isLoser -> Mood.SAD
                         else -> Mood.SCARED
                     }
+                    val lv = if (p.bot) 0 else Progress.level(p.wh)
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Box(
                             Modifier.onGloballyPositioned { c.centers[p.id] = it.boundsInRoot().center }
                                 .clickable(enabled = isLoser && s.me != p.id) {
                                     c.send(JSONObject().put("t", "throw").put("to", p.id).put("kind", "slipper"))
                                 }
-                        ) { Avatar(p.id, mood, 84.dp, c.hits[p.id]?.kind, nose = isLoser) }
+                        ) { Halo(lv, 70.dp) { Avatar(p.id, mood, 70.dp, c.hits[p.id]?.kind, nose = isLoser) } }
                         Text(p.name + if (p.id == s.me) " (أنت)" else "", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        if (!p.bot) Text("مستوى $lv · ${Progress.title(lv)}", color = Color(0xFFB0BEC5), fontSize = 10.sp)
                         Text("${p.total}", color = Gold, fontSize = 16.sp, fontWeight = FontWeight.Black)
                     }
                 }
             }
             Text(
                 if (s.me == loser.id) "أنت الخاسر... استعد 😅" else "اضغط على وجه الخاسر لضربه بالشبشب",
-                color = Color(0xFFFFCC80), fontSize = 13.sp
+                color = Color(0xFFFFCC80), fontSize = 12.sp
             )
+            awards.forEach { Text(it, color = Color.White, fontSize = 12.sp) }
+            if (duels.isNotEmpty()) Text("المواجهات — " + duels.joinToString("  |  "), color = Color(0xFF80CBC4), fontSize = 12.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Pill("لعبة جديدة بنفس اللاعبين", Color(0xFF2E7D32), big = true) { c.send(JSONObject().put("t", "newgame")) }
                 Pill("خروج", Color(0xFF6D4C41), big = true) { c.reset() }

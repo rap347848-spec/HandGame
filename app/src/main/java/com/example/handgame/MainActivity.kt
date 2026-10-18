@@ -34,6 +34,10 @@ class MainActivity : ComponentActivity() {
         val prefs = getSharedPreferences("handremmy", MODE_PRIVATE)
         c.rename(prefs.getString("name", "لاعب") ?: "لاعب")
         c.onName = { prefs.edit().putString("name", it).apply() }
+        c.winsHalf = prefs.getInt("winsHalf", 0)
+        c.onRecord = { prefs.edit().putInt("winsHalf", it).apply() }
+        c.loadH2h(prefs.getString("h2h", "") ?: "")
+        c.onH2h = { prefs.edit().putString("h2h", it).apply() }
         setContent { App(c, onHost = ::host, onJoin = ::join) }
     }
 

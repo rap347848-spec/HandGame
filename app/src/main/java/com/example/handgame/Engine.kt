@@ -5,6 +5,10 @@ import org.json.JSONObject
 
 class Player(val id: Int, val name: String, val isBot: Boolean = false) {
     var noTake = false
+    var winsHalf = 0                  // سجل الفوز (انتصارات × 2) كما أبلغ به اللاعب
+    var hands = 0                     // عدد مرات «هاند» في اللعبة
+    var jokers = 0                    // جوكرات أُخذت من الطاولة
+    var throws = 0                    // رميات البيض والشبشب
     var hand = mutableListOf<Int>()
     var laid = false
     var total = 0
@@ -43,8 +47,20 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
     private var lastFx: JSONObject? = null
 
     /** مؤثر يراه الجميع (رمي بيض/شبشب، ضحكة): يصل للكل مع الحالة ويُميَّز برقم تسلسلي */
-    fun emitFx(from: Int, to: Int, kind: String) {
-        lastFx = JSONObject().put("seq", ++fxCounter).put("from", from).put("to", to).put("kind", kind)
+    fun emitFx(from: Int, to: Int, kind: String, data: String = "") {
+        lastFx = JSONObject().put("seq", ++fxCounter).put("from", from).put("to", to).put("kind", kind).put("data", data)
+    }
+
+    private val lastReact = mutableMapOf<Int, Long>()
+
+    /** تفاعل سريع (إيموجي) يراه الجميع، بحد أقصى مرة كل 1.2 ثانية للاعب */
+    fun react(pid: Int, emoji: String): String? {
+        if (emoji !in listOf("😂", "👏", "😡", "🔥", "😎", "🤝")) return "غير صالح"
+        val now = System.currentTimeMillis()
+        if (now - (lastReact[pid] ?: 0L) < 1200) return null
+        lastReact[pid] = now
+        emitFx(pid, pid, "react", emoji)
+        return null
     }
 
     /** يلعب البوت الحالي خطوة واحدة */
@@ -139,6 +155,7 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
         when {
             first && p.hand.size <= 1 -> {      // هاند: نزّل كل أوراقه دفعة واحدة، والورقة الأخيرة تُرمى تلقائياً
                 if (p.hand.size == 1) { discard.addLast(p.hand.removeAt(0)); lastDiscBy = pid }
+                p.hands++
                 finish(pid, true)
             }
             p.hand.isEmpty() -> finish(pid, false)
@@ -175,6 +192,7 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
                 val joker = cs[j]
                 cs[j] = card
                 p.hand.remove(card); p.hand.add(joker)
+                p.jokers++
                 swapped = true
             }
         }
@@ -235,6 +253,7 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
             val cost = if (p.total == players.minOf { it.total }) 1 else 5
             p.total += cost; p.pen += cost
         }
+        players[from].throws++
         emitFx(from, to, kind)
         return null
     }
@@ -271,7 +290,8 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
             for (p in players) put(
                 JSONObject().put("id", p.id).put("name", p.name).put("n", p.hand.size)
                     .put("total", p.total).put("laid", p.laid).put("delta", deltas[p.id] ?: 0)
-                    .put("hist", JSONArray(p.rounds))
+                    .put("hist", JSONArray(p.rounds)).put("wh", p.winsHalf).put("bot", p.isBot)
+                    .put("st", JSONArray(listOf(p.hands, p.jokers, p.throws)))
             )
         })
         put("hand", JSONArray(players[pid].hand))
