@@ -147,18 +147,19 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
             sum += v
         }
         if (!p.laid && sum < OPEN_MIN) return "أول نزول لازم $OPEN_MIN نقطة أو أكثر (مجموعك $sum)"
+        // قانون الإنهاء: لا يجوز إفراغ اليد بالنزول، لازم تبقى ورقة ترميها (والرمي هو الذي ينهي الجولة)
+        if (p.hand.size - all.size < 1) return "لازم تبقي ورقة ترميها على الطاولة"
         val first = !p.laid
+        // هاند: يد من 15 ورقة، تنزل 14 منها دفعة واحدة في أول نزول، والورقة الأخيرة هي ورقة الرمي
+        val isHand = first && p.hand.size == 15 && all.size == 14
         p.hand.removeAll(all.toSet())
         for (g in groups) melds.add(Meld(Melds.arrange(g).toMutableList()))
         p.laid = true
         if (taken in all) taken = -1
-        when {
-            first && p.hand.size <= 1 -> {      // هاند: نزّل كل أوراقه دفعة واحدة، والورقة الأخيرة تُرمى تلقائياً
-                if (p.hand.size == 1) { discard.addLast(p.hand.removeAt(0)); lastDiscBy = pid }
-                p.hands++
-                finish(pid, true)
-            }
-            p.hand.isEmpty() -> finish(pid, false)
+        if (isHand) {
+            discard.addLast(p.hand.removeAt(0)); lastDiscBy = pid
+            p.hands++
+            finish(pid, true)
         }
         return null
     }
@@ -197,12 +198,12 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
             }
         }
         if (!swapped) {
+            if (p.hand.size <= 1) return "لازم تبقي ورقة ترميها على الطاولة"
             if (!p.laid) return "لازم تنزّل أولاً (أو ضع الورقة التي يمثلها الجوكر لتأخذه)"
             val nl = Melds.extend(cs, card) ?: return "الورقة لا تناسب هذه المجموعة"
             cs.clear(); cs.addAll(nl); p.hand.remove(card)
         }
         if (card == taken) taken = -1
-        if (p.hand.isEmpty()) finish(pid, false)
         return null
     }
 

@@ -648,8 +648,10 @@ fun Table(c: Controller) {
     val total = stagedPts + formedPts + selPts
     val shown = stagedPts + formedPts + if (partsValid) selPts else rawSel
     val handSet = stagedIds + formedIds + (if (partsValid) chosen else emptySet())
-    val canHand = myTurn && !meP.laid && total >= 51 && selOk && handSet.isNotEmpty() && s.hand.size - handSet.size <= 1
-    val canLay = myTurn && selOk && (if (!meP.laid) total >= 51 else (staged.isNotEmpty() || formedValid.isNotEmpty() || partsValid))
+    // قانون الإنهاء: لا يجوز إفراغ اليد بالنزول، لازم تبقى ورقة ترميها. والهاند: 15 ورقة، تنزل 14 والأخيرة للرمي
+    val leavesOne = s.hand.size - handSet.size >= 1
+    val canHand = myTurn && !meP.laid && total >= 51 && selOk && s.hand.size == 15 && handSet.size == 14
+    val canLay = myTurn && selOk && leavesOne && (if (!meP.laid) total >= 51 else (staged.isNotEmpty() || formedValid.isNotEmpty() || partsValid))
 
     fun sendMeld() {
         // ترتيب كل مجموعة كما رتّبتها في يدك (يسار إلى يمين): موقع الجوكر يحدد بديله
@@ -807,6 +809,7 @@ fun Table(c: Controller) {
                         "المجموع: $shown", color = if (ok) Good else Gold, fontWeight = FontWeight.Black, fontSize = 15.sp,
                         modifier = Modifier.background(Color(0x99000000), RoundedCornerShape(10.dp)).border(1.dp, if (ok) Good else Color.Transparent, RoundedCornerShape(10.dp)).padding(horizontal = 10.dp, vertical = 4.dp)
                     )
+                    if (handSet.isNotEmpty() && !leavesOne) Text("أبقِ ورقة للرمي", color = Color(0xFFFFCC80), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
               }
               Row(Modifier.padding(start = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {

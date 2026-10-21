@@ -99,6 +99,18 @@ object Bot {
         }
     }
 
+    /** قانون الإنهاء: لا ينزّل كل أوراقه، يترك ورقة واحدة على الأقل ليرميها */
+    private fun keepOne(parts: List<List<Int>>, handSize: Int): List<List<Int>> {
+        if (parts.sumOf { it.size } < handSize) return parts
+        val idx = parts.indexOfFirst { it.size >= 4 }
+        if (idx >= 0) {
+            val g = parts[idx]
+            val shorter = listOf(g.dropLast(1), g.drop(1)).firstOrNull { Melds.value(it) >= 0 }
+            if (shorter != null) return parts.toMutableList().also { it[idx] = shorter }
+        }
+        return parts.sortedBy { Melds.value(it) }.drop(1)
+    }
+
     /** خطوة واحدة: السحب أو الأخذ، ثم في الخطوة التالية النزول والإضافة والرمي */
     fun step(e: Engine, p: Player) {
         val pid = p.id
@@ -116,7 +128,7 @@ object Bot {
             if (e.draw(pid) != null) e.timeout()
             return
         }
-        val parts = bestMelds(p.hand)
+        val parts = keepOne(bestMelds(p.hand), p.hand.size)
         val total = parts.sumOf { Melds.value(it) }
         if (parts.isNotEmpty() && (p.laid || total >= Engine.OPEN_MIN)) {
             e.meld(pid, parts)
