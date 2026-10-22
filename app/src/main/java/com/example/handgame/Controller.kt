@@ -102,6 +102,32 @@ class Controller {
     fun botName(i: Int) = botNames[i % botNames.size]
 
     fun rename(n: String) { myName = n.take(12); onName?.invoke(myName) }
+
+    // ---- اختصارات سرية في شعار القائمة (بدون أي مؤشر أثناء الضغط) ----
+    // 10 ضغطات لكل من: شيخ الكبا، بنت البستوني، قص الديناري ← مستوى 80
+    // قص الديناري ×3 + شيخ الكبا ×4 + بنت البستوني ×7 ← مستوى 100 (كل الإنجازات)
+    private val secret = IntArray(3)       // 0 = بنت البستوني، 1 = شيخ الكبا، 2 = قص الديناري
+    private var secretTok = 0
+
+    fun secretTap(which: Int) {
+        secret[which]++
+        val tok = ++secretTok
+        if (secret.all { it >= 10 }) { secret.fill(0); setLevel(80); return }
+        // يتوقف الضغط 1.5 ثانية وأعدادك بالضبط (7، 4، 3) فيُفعَّل المستوى 100، وبعد 10 ثوانٍ خمول يبدأ العدّ من جديد
+        main.postDelayed({
+            if (tok == secretTok && secret[0] == 7 && secret[1] == 4 && secret[2] == 3) { secret.fill(0); setLevel(100) }
+        }, 1500)
+        main.postDelayed({ if (tok == secretTok) secret.fill(0) }, 10000)
+    }
+
+    private fun setLevel(l: Int) {
+        val target = Progress.cum[l] * 2
+        if (winsHalf < target) {
+            winsHalf = target
+            onRecord?.invoke(winsHalf)
+            msg = if (l == 100) "مستواك 100 — كل الإنجازات مفتوحة" else "مستواك $l"
+        } else msg = "مستواك الحالي ${Progress.level(winsHalf)} أعلى"
+    }
     var msg by mutableStateOf("")
     val lobby = mutableStateListOf<String>()
     var ui by mutableStateOf<UiState?>(null)

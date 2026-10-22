@@ -17,6 +17,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.horizontalScroll
@@ -257,11 +258,14 @@ fun CardView(id: Int, w: Dp, h: Dp, alpha: Float = 1f, borderColor: Color? = nul
 }
 
 @Composable
-fun Logo() {
+fun Logo(c: Controller) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(Modifier.height(86.dp).width(120.dp)) {
             listOf(11 to -14f, 25 to 0f, 26 to 14f).forEachIndexed { i, (id, rot) ->
-                Box(Modifier.align(Alignment.Center).offset(x = ((i - 1) * 26).dp).graphicsLayer { rotationZ = rot }) { CardView(id, 52.dp, 74.dp) }
+                Box(
+                    Modifier.align(Alignment.Center).offset(x = ((i - 1) * 26).dp).graphicsLayer { rotationZ = rot }
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { c.secretTap(i) }
+                ) { CardView(id, 52.dp, 74.dp) }
             }
         }
         Text("هاند", fontSize = 58.sp, fontWeight = FontWeight.Black, color = Gold)
@@ -274,7 +278,7 @@ fun Logo() {
 @Composable
 fun Menu(c: Controller, onHost: () -> Unit, onJoin: () -> Unit) {
     Row(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { Logo() }
+        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { Logo(c) }
         Column(
             Modifier.weight(1.4f).background(Color(0x33FFFFFF), RoundedCornerShape(20.dp)).verticalScroll(rememberScrollState()).padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
