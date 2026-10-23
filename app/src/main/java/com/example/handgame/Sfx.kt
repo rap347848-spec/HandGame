@@ -1,8 +1,12 @@
 package com.example.handgame
 
+import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import android.media.MediaPlayer
+import android.speech.tts.TextToSpeech
+import java.util.Locale
 import kotlin.concurrent.thread
 import kotlin.math.PI
 import kotlin.math.exp
@@ -37,6 +41,45 @@ object Sfx {
     private fun pcm(sec: Float, f: (Float) -> Float): ShortArray {
         val n = (SR * sec).toInt()
         return ShortArray(n) { i -> (f(i / SR.toFloat()).coerceIn(-1f, 1f) * 32000).toInt().toShort() }
+    }
+
+    // ---- الأصوات الناطقة: ثلاثة كرت / اثنين كرت / كرت / هاند / رمي ----
+    private var appCtx: Context? = null
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
+
+    private val words = mapOf(
+        "c3" to "ثَلاثَة كَرْت",
+        "c2" to "إثْنَيْن كَرْت",
+        "c1" to "كَرْت",
+        "hand" to "هَانْد",
+        "rami" to "رِمِيْ"
+    )
+
+    fun init(ctx: Context) {
+        appCtx = ctx.applicationContext
+        tts = TextToSpeech(ctx.applicationContext) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                tts?.setLanguage(Locale("ar"))
+                tts?.setSpeechRate(0.95f)
+                ttsReady = true
+            }
+        }
+    }
+
+    /**
+     * ينطق الكلمة. إن وُضع تسجيل صوتي في res/raw باسم voice_c3 / voice_c2 / voice_c1 / voice_hand / voice_rami
+     * (mp3 أو ogg أو wav) يُشغَّل بدل صوت الجوال الآلي.
+     */
+    fun say(key: String) {
+        val ctx = appCtx ?: return
+        val id = ctx.resources.getIdentifier("voice_$key", "raw", ctx.packageName)
+        if (id != 0) {
+            try { MediaPlayer.create(ctx, id)?.apply { setOnCompletionListener { it.release() }; start() } } catch (_: Exception) {}
+            return
+        }
+        val text = words[key] ?: return
+        if (ttsReady) tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "v$key")
     }
 
     /** حسب نوع المؤثر: egg / slipper / laugh */

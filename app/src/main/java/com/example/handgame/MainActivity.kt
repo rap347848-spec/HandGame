@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import com.google.android.gms.ads.MobileAds
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 
@@ -38,6 +39,8 @@ class MainActivity : ComponentActivity() {
         c.onRecord = { prefs.edit().putInt("winsHalf", it).apply() }
         c.loadH2h(prefs.getString("h2h", "") ?: "")
         c.onH2h = { prefs.edit().putString("h2h", it).apply() }
+        Sfx.init(applicationContext)                         // الأصوات الناطقة
+        MobileAds.initialize(this)                           // AdMob
         setContent { App(c, onHost = ::host, onJoin = ::join) }
     }
 

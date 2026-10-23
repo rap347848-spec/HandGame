@@ -160,6 +160,7 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
             discard.addLast(p.hand.removeAt(0)); lastDiscBy = pid
             p.hands++
             finish(pid, true)
+            emitFx(pid, pid, "voice", "hand")      // صوت: هَانْد
         }
         return null
     }
@@ -214,7 +215,14 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
         val p = players[pid]
         if (card !in p.hand) return "غير صالح"
         p.hand.remove(card); discard.addLast(card); lastDiscBy = pid
-        if (p.hand.isEmpty()) finish(pid, false) else nextTurn()
+        if (p.hand.isEmpty()) {
+            finish(pid, false)
+            emitFx(pid, pid, "voice", "rami")          // صوت: رِمِيْ (إنهاء الجولة بدون هاند)
+        } else {
+            val left = p.hand.size
+            if (left in 1..3) emitFx(pid, pid, "voice", "c$left")   // صوت: ثلاثة كرت / اثنين كرت / كرت
+            nextTurn()
+        }
         return null
     }
 

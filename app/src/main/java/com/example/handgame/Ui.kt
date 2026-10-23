@@ -58,6 +58,10 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.viewinterop.AndroidView
+import com.google.android.gms.ads.AdRequest
+import com.google.android.gms.ads.AdSize
+import com.google.android.gms.ads.AdView
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -108,6 +112,11 @@ fun App(c: Controller, onHost: () -> Unit, onJoin: () -> Unit) {
                     "table" -> Table(c)
                 }
                 FxLayer(c)
+                // بانر إعلاني: في القوائم وشاشات الانتظار ونهاية اللعبة فقط، وليس أثناء اللعب
+                val u = c.ui
+                val showAd = c.screen in listOf("menu", "hostLobby", "clientLobby", "join", "joinWifi") ||
+                    (c.screen == "table" && u != null && u.roundOver && u.gameOver)
+                if (showAd) AdBanner(Modifier.align(Alignment.BottomCenter).zIndex(40f))
                 if (c.msg.isNotEmpty()) {
                     LaunchedEffect(c.msg) { delay(3500); c.msg = "" }
                     Text(
@@ -257,6 +266,21 @@ fun CardView(id: Int, w: Dp, h: Dp, alpha: Float = 1f, borderColor: Color? = nul
     }
 }
 
+/** بانر AdMob (320×50) */
+@Composable
+fun AdBanner(modifier: Modifier = Modifier) {
+    AndroidView(
+        modifier = modifier.width(320.dp).height(50.dp),
+        factory = { ctx ->
+            AdView(ctx).apply {
+                setAdSize(AdSize.BANNER)
+                adUnitId = Ads.bannerId
+                loadAd(AdRequest.Builder().build())
+            }
+        }
+    )
+}
+
 @Composable
 fun Logo(c: Controller) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -277,7 +301,7 @@ fun Logo(c: Controller) {
 
 @Composable
 fun Menu(c: Controller, onHost: () -> Unit, onJoin: () -> Unit) {
-    Row(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxSize().padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 56.dp), horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { Logo(c) }
         Column(
             Modifier.weight(1.4f).background(Color(0x33FFFFFF), RoundedCornerShape(20.dp)).verticalScroll(rememberScrollState()).padding(12.dp),
@@ -302,7 +326,7 @@ fun Menu(c: Controller, onHost: () -> Unit, onJoin: () -> Unit) {
 @Composable
 fun Lobby(c: Controller) {
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 56.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp), horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text("اللاعبون (${c.lobby.size}/4)", fontSize = 20.sp, color = Gold, fontWeight = FontWeight.Bold)
@@ -344,7 +368,7 @@ fun Lobby(c: Controller) {
 @Composable
 fun JoinWifi(c: Controller) {
     var ip by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 24.dp, end = 24.dp, top = 10.dp, bottom = 56.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("الانضمام عبر الواي فاي", fontSize = 22.sp, color = Gold, fontWeight = FontWeight.Bold)
         Text(
             when {
@@ -371,7 +395,7 @@ fun JoinWifi(c: Controller) {
 @android.annotation.SuppressLint("MissingPermission")
 @Composable
 fun JoinList(c: Controller) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 24.dp, end = 24.dp, top = 10.dp, bottom = 56.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("اختر جوال المضيف", fontSize = 22.sp, color = Gold, fontWeight = FontWeight.Bold)
         Text("لازم تكون مقترناً (Pair) مع جوال المضيف من إعدادات البلوتوث أولاً.", color = Color.White)
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1024,7 +1048,7 @@ fun FinalScene(c: Controller, s: UiState) {
     }
     Box(Modifier.fillMaxSize().background(Color(0xCC000000)).clickable(enabled = false) {}, contentAlignment = Alignment.Center) {
         Column(
-            Modifier.verticalScroll(rememberScrollState()).padding(vertical = 6.dp),
+            Modifier.verticalScroll(rememberScrollState()).padding(top = 6.dp, bottom = 56.dp),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Text("انتهت اللعبة", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)

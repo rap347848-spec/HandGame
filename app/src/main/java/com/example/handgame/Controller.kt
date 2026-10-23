@@ -528,6 +528,7 @@ class Controller {
         val from = f.getInt("from")
         val to = f.getInt("to")
         val kind = f.getString("kind")
+        if (kind == "voice") { Sfx.say(f.optString("data")); return }
         if (kind == "react") {
             reacts[from] = Pair(seq, f.optString("data"))
             main.postDelayed({ if (reacts[from]?.first == seq) reacts.remove(from) }, 2200)
