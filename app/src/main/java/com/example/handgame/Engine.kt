@@ -191,6 +191,7 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
                 else null
             }
             if (j != null && j >= 0) {
+                if (!p.laid) return "لازم تكون نازلاً (نزّلت مجموعاتك) لتأخذ الجوكر"
                 val joker = cs[j]
                 cs[j] = card
                 p.hand.remove(card); p.hand.add(joker)
@@ -290,6 +291,7 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
         put("t", "state"); put("gid", gid); put("me", pid); put("round", round); put("rounds", totalRounds)
         put("turn", turn); put("drew", drew); put("dby", lastDiscBy)
         put("taken", if (pid == turn) taken else -1)
+        put("dn", discard.size)
         lastFx?.let { put("fx", it) }
         put("sec", maxOf(0, ((deadline - System.currentTimeMillis()) / 1000).toInt()))
         put("stock", stock.size); put("discTop", discard.lastOrNull() ?: -1)

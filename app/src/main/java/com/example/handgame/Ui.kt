@@ -104,12 +104,14 @@ fun App(c: Controller, onHost: () -> Unit, onJoin: () -> Unit) {
     MaterialTheme(colorScheme = darkColorScheme(primary = Gold, onPrimary = Color.Black)) {
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Purple1, Purple2)))) {
-                when (c.screen) {
-                    "menu" -> Menu(c, onHost, onJoin)
-                    "hostLobby", "clientLobby" -> Lobby(c)
-                    "join" -> JoinList(c)
-                    "joinWifi" -> JoinWifi(c)
-                    "table" -> Table(c)
+                Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))) {
+                    when (c.screen) {
+                        "menu" -> Menu(c, onHost, onJoin)
+                        "hostLobby", "clientLobby" -> Lobby(c)
+                        "join" -> JoinList(c)
+                        "joinWifi" -> JoinWifi(c)
+                        "table" -> Table(c)
+                    }
                 }
                 FxLayer(c)
                 // بانر إعلاني: في القوائم وشاشات الانتظار ونهاية اللعبة فقط، وليس أثناء اللعب
@@ -714,12 +716,12 @@ fun Table(c: Controller) {
     }
 
     Box(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Column(Modifier.fillMaxSize().padding(start = 6.dp, end = 6.dp, top = 2.dp, bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
             // ------- منطقة الطاولة
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 val feltShape = RoundedCornerShape(38.dp)
                 Box(
-                    Modifier.align(Alignment.Center).fillMaxHeight().fillMaxWidth(if (n == 3) 0.74f else 0.9f).clip(feltShape)
+                    Modifier.align(Alignment.Center).fillMaxHeight().fillMaxWidth(if (n == 3) 0.78f else 0.92f).clip(feltShape)
                         .background(Brush.radialGradient(listOf(Felt1, Felt2)))
                         .border(3.dp, Brush.linearGradient(listOf(Color(0xFFF5F5F5), Color(0xFF9E9E9E))), feltShape)
                         .onGloballyPositioned { feltRect[0] = it.boundsInRoot() }
@@ -744,7 +746,7 @@ fun Table(c: Controller) {
                 // الوسط: الكومة + الرمي + المجموعات
                 Row(
                     Modifier.align(Alignment.Center).fillMaxWidth(if (n == 3) 0.6f else 0.78f)
-                        .padding(top = if (n == 3) 0.dp else 62.dp, bottom = 6.dp),
+                        .padding(top = if (n == 3) 0.dp else 62.dp, bottom = 54.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -797,10 +799,11 @@ fun Table(c: Controller) {
                         Row(horizontalArrangement = Arrangement.spacedBy((-16).dp)) { cards.forEach { CardView(it, 30.dp, 44.dp) } }
                     }
                 }
-            }
-
             // ------- شريط الأزرار
-            Row(Modifier.fillMaxWidth().height(46.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.align(Alignment.BottomCenter).fillMaxWidth(if (n == 3) 0.78f else 0.92f).height(46.dp).padding(horizontal = 26.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
               // يمين الشريط ثابت دائماً (أزرار اللعب + سطر/سطرين)، ويسار يتمرّر عند ضيق الشاشة
               Row(
                 Modifier.weight(1f).horizontalScroll(rememberScrollState()),
@@ -856,12 +859,14 @@ fun Table(c: Controller) {
                 Pill(if (twoRows) "سطر واحد" else "سطرين", Color(0xFF455A64)) { twoRows = !twoRows }
               }
             }
+            }
 
+            Spacer(Modifier.height(6.dp))      // فراغ بسيط بين الطاولة وورق اللاعب
             Hand(c, selected, stagedIds, s.taken, twoRows, ::discard, ::dropCard)
         }
 
         if (showReacts) Row(
-            Modifier.align(Alignment.BottomStart).padding(start = 8.dp, bottom = 122.dp).zIndex(20f)
+            Modifier.align(Alignment.BottomStart).padding(start = 8.dp, bottom = 140.dp).zIndex(20f)
                 .background(Color(0xE61A0B3B), RoundedCornerShape(14.dp)).padding(horizontal = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(2.dp)
         ) {
@@ -907,11 +912,11 @@ fun Hand(
     }
 
     BoxWithConstraints(
-        Modifier.fillMaxWidth().height(if (rowsCount == 2) 112.dp else 84.dp).onGloballyPositioned { origin = it.positionInRoot() }
+        Modifier.fillMaxWidth().height(if (rowsCount == 2) 124.dp else 90.dp).onGloballyPositioned { origin = it.positionInRoot() }
     ) {
-        val cw = 46.dp
-        val ch = 66.dp
-        val rowH = 34.dp
+        val cw = 52.dp
+        val ch = 74.dp
+        val rowH = 38.dp
         val perRow = if (rowsCount == 2) maxOf(7, (n + 1) / 2) else maxOf(1, n)
         val d = LocalDensity.current
         val rowPx = with(d) { rowH.toPx() }

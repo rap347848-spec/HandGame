@@ -74,7 +74,7 @@ class UiState(
     val me: Int, val round: Int, val rounds: Int, val turn: Int, val drew: Boolean, val sec: Int,
     val stock: Int, val discTop: Int, val players: List<PInfo>, val hand: List<Int>,
     val melds: List<List<Int>>, val roundOver: Boolean, val gameOver: Boolean, val note: String,
-    val dby: Int, val rw: Int, val hw: Boolean, val taken: Int, val gid: Int
+    val dby: Int, val rw: Int, val hw: Boolean, val taken: Int, val gid: Int, val dn: Int = 0
 )
 
 class FxEvent(val seq: Int, val from: Int, val to: Int, val kind: String)
@@ -503,10 +503,15 @@ class Controller {
             v.getInt("sec"), v.getInt("stock"), v.getInt("discTop"), ps, hand,
             List(ma.length()) { ints(ma.getJSONArray(it)) },
             v.getBoolean("roundOver"), v.getBoolean("gameOver"), v.getString("note"),
-            v.getInt("dby"), v.getInt("rw"), v.getBoolean("hw"), v.getInt("taken"), v.getInt("gid")
+            v.getInt("dby"), v.getInt("rw"), v.getBoolean("hw"), v.getInt("taken"), v.getInt("gid"), v.optInt("dn", 0)
         )
         ui = st
         if (prev != null && prev.gid != st.gid) lastGain = null
+        // صوت سحب الورقة (من الكومة أو من المرمية) وصوت رمي الورقة على الكومة
+        if (prev != null && prev.round == st.round && prev.gid == st.gid) {
+            if (st.stock < prev.stock || st.dn < prev.dn) Sfx.cardDraw()
+            else if (st.dn > prev.dn) Sfx.cardThrow()
+        }
         if (st.gameOver && st.roundOver && st.gid != recordedGid) { recordedGid = st.gid; recordGame(st) }
         val sameRound = prev != null && prev.round == st.round && prev.gid == st.gid
         if (!sameRound) { order.clear(); fresh.clear(); groups.clear() }

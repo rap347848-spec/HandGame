@@ -8,6 +8,9 @@ import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.google.android.gms.ads.MobileAds
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -39,9 +42,28 @@ class MainActivity : ComponentActivity() {
         c.onRecord = { prefs.edit().putInt("winsHalf", it).apply() }
         c.loadH2h(prefs.getString("h2h", "") ?: "")
         c.onH2h = { prefs.edit().putString("h2h", it).apply() }
+        // ملء الشاشة: فوق الساعة والبطارية وحافة الكاميرا (النوتش)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        if (Build.VERSION.SDK_INT >= 28) {
+            val lp = window.attributes
+            lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            window.attributes = lp
+        }
+        hideBars()
         Sfx.init(applicationContext)                         // الأصوات الناطقة
         MobileAds.initialize(this)                           // AdMob
         setContent { App(c, onHost = ::host, onJoin = ::join) }
+    }
+
+    private fun hideBars() {
+        val ctl = WindowInsetsControllerCompat(window, window.decorView)
+        ctl.hide(WindowInsetsCompat.Type.systemBars())
+        ctl.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) hideBars()
     }
 
     private fun ensure(denied: (() -> Unit)? = null, next: () -> Unit) {

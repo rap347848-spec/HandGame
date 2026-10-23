@@ -36,6 +36,7 @@ object Melds {
      */
     fun value(ids: List<Int>): Int {
         if (ids.size < 3) return -1
+        if (ids.count { Cards.isJoker(it) } > 1) return -1      // جوكر واحد فقط في كل مجموعة
         val reg = ids.filter { !Cards.isJoker(it) }
         if (reg.isEmpty()) return -1
         val ranks = reg.map { Cards.rank(it) }
@@ -134,6 +135,7 @@ object Melds {
      * التسلسل يمتد من طرفيه فقط، والتشكيلة حتى 4 أوراق.
      */
     fun extend(cs: List<Int>, card: Int): List<Int>? {
+        if (Cards.isJoker(card) && cs.any { Cards.isJoker(it) }) return null   // جوكر واحد فقط في كل مجموعة
         if (isSet(cs)) {
             if (cs.size >= 4) return null
             if (Cards.isJoker(card)) return cs + card

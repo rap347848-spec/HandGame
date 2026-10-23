@@ -89,6 +89,22 @@ object Sfx {
         else -> laugh()
     }
 
+    /** سحب ورقة: حفيف خفيف */
+    fun cardDraw() {
+        var y = 0f
+        play(pcm(0.16f) { t ->
+            val n = Random.nextFloat() * 2 - 1
+            y += 0.35f * (n - y)
+            (n - y) * sin(PI.toFloat() * t / 0.16f) * 0.55f
+        })
+    }
+
+    /** رمي ورقة على الكومة: نقرة قصيرة */
+    fun cardThrow() = play(pcm(0.12f) { t ->
+        val n = Random.nextFloat() * 2 - 1
+        n * exp(-t * 70f) * 0.7f + sin(TWO_PI * 190f * t) * exp(-t * 45f) * 0.4f
+    })
+
     /** صفعة الشبشب */
     fun slap() = play(pcm(0.22f) { t ->
         val n = Random.nextFloat() * 2 - 1
