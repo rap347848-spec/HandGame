@@ -41,9 +41,13 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           if [ "$SIGNED" = "1" ]; then
-            gradle assembleRelease bundleRelease --no-daemon
+            gradle assembleRelease bundleRelease -Pandroid.suppressUnsupportedCompileSdk=36 --no-daemon
+            if ! ls app/build/outputs/bundle/release/*.aab >/dev/null 2>&1; then
+              echo "::error::Signed build finished but no .aab was produced"
+              exit 1
+            fi
           else
-            gradle assembleDebug --no-daemon
+            gradle assembleDebug -Pandroid.suppressUnsupportedCompileSdk=36 --no-daemon
           fi
       - uses: actions/upload-artifact@v4
         with:
