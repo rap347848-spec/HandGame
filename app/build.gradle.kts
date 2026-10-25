@@ -6,11 +6,30 @@ android {
     namespace = "com.example.handgame"
     compileSdk = 34
     defaultConfig {
-        applicationId = "com.example.handgame"
+        applicationId = "com.talalqasim.handgaza"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
+        // رقم الإصدار يزيد تلقائياً مع كل بناء على جيت هب (المتاجر ترفض رقماً مكرراً)
+        versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
         versionName = "1.0"
+    }
+    // توقيع نسخة النشر: يُقرأ من أسرار جيت هب، وإن لم توجد يبقى البناء التجريبي يعمل
+    val ksPath = System.getenv("KEYSTORE_PATH")
+    signingConfigs {
+        if (!ksPath.isNullOrEmpty() && File(ksPath).exists()) {
+            create("release") {
+                storeFile = File(ksPath)
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS")
+                keyPassword = System.getenv("KEY_PASSWORD")
+            }
+        }
+    }
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("release")
+        }
     }
     buildFeatures { compose = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
