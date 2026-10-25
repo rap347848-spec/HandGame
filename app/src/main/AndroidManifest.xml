@@ -12,7 +12,7 @@
 
     <application
         android:icon="@mipmap/ic_launcher"
-        android:label="handremmy"
+        android:label="handGAZA"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.NoActionBar">
         <meta-data
