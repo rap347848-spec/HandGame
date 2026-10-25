@@ -4,11 +4,11 @@ plugins {
 }
 android {
     namespace = "com.example.handgame"
-    compileSdk = 34
+    compileSdk = 36
     defaultConfig {
         applicationId = "com.talalqasim.handgaza"
         minSdk = 24
-        targetSdk = 34
+        targetSdk = 36
         // رقم الإصدار يزيد تلقائياً مع كل بناء على جيت هب (المتاجر ترفض رقماً مكرراً)
         versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
         versionName = "1.0"
