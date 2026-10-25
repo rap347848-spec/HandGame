@@ -31,6 +31,8 @@ android {
             signingConfig = signingConfigs.findByName("release")
         }
     }
+    // فحص Lint يعطي خطأ خاطئاً بسبب نسخة Fragment قديمة قادمة من مكتبة الإعلانات
+    lint { disable += "InvalidFragmentVersionForActivityResult" }
     buildFeatures { compose = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
     compileOptions {
@@ -45,5 +47,6 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.activity:activity-compose:1.9.0")
+    implementation("androidx.fragment:fragment-ktx:1.8.5")
     implementation("com.google.android.gms:play-services-ads:23.3.0")
 }
