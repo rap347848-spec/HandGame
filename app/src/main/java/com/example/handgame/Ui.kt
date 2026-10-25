@@ -294,7 +294,7 @@ fun Logo(c: Controller) {
                 ) { CardView(id, 52.dp, 74.dp) }
             }
         }
-        Text("هاند", fontSize = 58.sp, fontWeight = FontWeight.Black, color = Gold)
+        Text("هاند رمي غزة", fontSize = 34.sp, fontWeight = FontWeight.Black, color = Gold, textAlign = TextAlign.Center)
         Text(CREDIT, fontSize = 16.sp, color = Color(0xCCFFFFFF), fontWeight = FontWeight.Bold)
     }
 }
@@ -875,7 +875,7 @@ fun Table(c: Controller) {
             }
         }
         ScoreBoard(s, Modifier.align(Alignment.TopEnd).padding(6.dp).zIndex(10f))
-        Text("هاند · $CREDIT", Modifier.align(Alignment.TopStart).padding(8.dp), color = Color(0x88FFFFFF), fontSize = 10.sp)
+        Text("هاند رمي غزة · $CREDIT", Modifier.align(Alignment.TopStart).padding(8.dp), color = Color(0x88FFFFFF), fontSize = 10.sp)
         if (s.roundOver) { if (s.gameOver) FinalScene(c, s) else RoundOver(c, s) }
     }
 }
