@@ -23,6 +23,7 @@ jobs:
           if [ -n "$KS_B64" ]; then
             # strip spaces, newlines, CR and quotes that break base64
             CLEAN=$(printf '%s' "$KS_B64" | tr -d ' \n\r\t"'"'"'')
+            echo "Secret length: ${#CLEAN} (expected 3516) | starts: ${CLEAN:0:6} | ends: ${CLEAN: -6}"
             if printf '%s' "$CLEAN" | base64 -d > "$GITHUB_WORKSPACE/release.jks" 2>/dev/null \
                && [ -s "$GITHUB_WORKSPACE/release.jks" ]; then
               echo "SIGNED=1" >> "$GITHUB_ENV"
