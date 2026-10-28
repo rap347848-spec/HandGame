@@ -130,6 +130,31 @@ object Melds {
 
     fun display(ids: List<Int>): List<Int> = arrange(ids)
 
+    /** ترتيب تشكيلة: حسب النوع، والجوكر في الآخر */
+    private fun sortSet(l: List<Int>): List<Int> = l.sortedBy { if (Cards.isJoker(it)) 9 else Cards.suit(it) }
+
+    /** فهرس الجوكر الذي تأخذه هذه الورقة إن وُضعت مكانه في المجموعة، أو -1 */
+    fun jokerSwapIndex(cs: List<Int>, card: Int): Int {
+        if (Cards.isJoker(card)) return -1
+        if (isSet(cs)) {
+            val reg = cs.filter { !Cards.isJoker(it) }
+            return if (cs.size == 4 && reg.size < 4 && Cards.rank(card) == Cards.rank(reg[0]) &&
+                reg.none { Cards.suit(it) == Cards.suit(card) }
+            ) cs.indexOfFirst { Cards.isJoker(it) } else -1
+        }
+        val ranks = runRanks(cs) ?: return -1
+        val suit = cs.firstOrNull { !Cards.isJoker(it) }?.let { Cards.suit(it) }
+        if (suit != Cards.suit(card)) return -1
+        return cs.indices.firstOrNull { Cards.isJoker(cs[it]) && matches(card, ranks[it]) } ?: -1
+    }
+
+    /** هل تصلح الورقة لهذه المجموعة على الطاولة (إضافة أو أخذ جوكر)؟ تُستخدم للإضاءة أثناء السحب */
+    fun canAdd(cs: List<Int>, card: Int, laid: Boolean, handSize: Int): Boolean {
+        if (!laid) return false
+        if (jokerSwapIndex(cs, card) >= 0) return true
+        return handSize > 1 && extend(cs, card) != null
+    }
+
     /**
      * يضيف ورقة إلى مجموعة على الطاولة (بدون تغيير مواقع ما فيها)، أو null إن لم تناسب.
      * التسلسل يمتد من طرفيه فقط، والتشكيلة حتى 4 أوراق.
@@ -138,10 +163,10 @@ object Melds {
         if (Cards.isJoker(card) && cs.any { Cards.isJoker(it) }) return null   // جوكر واحد فقط في كل مجموعة
         if (isSet(cs)) {
             if (cs.size >= 4) return null
-            if (Cards.isJoker(card)) return cs + card
+            if (Cards.isJoker(card)) return sortSet(cs + card)
             val reg = cs.filter { !Cards.isJoker(it) }
             if (Cards.rank(card) != Cards.rank(reg[0]) || reg.any { Cards.suit(it) == Cards.suit(card) }) return null
-            return cs + card
+            return sortSet(cs + card)      // تدخل في مكانها بين أوراق التشكيلة حسب النوع
         }
         val ranks = runRanks(cs) ?: return null
         val dir = if (ranks[1] > ranks[0]) 1 else -1

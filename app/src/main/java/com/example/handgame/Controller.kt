@@ -67,7 +67,8 @@ class WifiHost(val name: String, val ip: String, val port: Int, val players: Int
 
 class PInfo(
     val id: Int, val name: String, val n: Int, val total: Int, val laid: Boolean, val delta: Int, val hist: List<Int>,
-    val wh: Int = 0, val bot: Boolean = false, val hands: Int = 0, val jokers: Int = 0, val throws: Int = 0
+    val wh: Int = 0, val bot: Boolean = false, val hands: Int = 0, val jokers: Int = 0, val throws: Int = 0,
+    val out: Boolean = false
 )
 
 class UiState(
@@ -81,8 +82,12 @@ class FxEvent(val seq: Int, val from: Int, val to: Int, val kind: String)
 class Hit(val seq: Int, val kind: String)
 
 /** الفائز = أقل نقاط، والخاسر = أعلى نقاط (والتعادل للأسوأ في آخر جولة) */
-fun finalWinner(ps: List<PInfo>) = ps.minWithOrNull(compareBy<PInfo>({ it.total }, { it.hist.lastOrNull() ?: 0 }))
-fun finalLoser(ps: List<PInfo>) = ps.maxWithOrNull(compareBy<PInfo>({ it.total }, { it.hist.lastOrNull() ?: 0 }))
+fun finalWinner(ps: List<PInfo>) =
+    ps.filter { !it.out }.minWithOrNull(compareBy<PInfo>({ it.total }, { it.hist.lastOrNull() ?: 0 })) ?: ps.firstOrNull()
+/** المنسحب هو الخاسر دائماً */
+fun finalLoser(ps: List<PInfo>): PInfo? =
+    ps.filter { it.out }.maxWithOrNull(compareBy<PInfo>({ it.total }, { -it.id }))
+        ?: ps.maxWithOrNull(compareBy<PInfo>({ it.total }, { it.hist.lastOrNull() ?: 0 }))
 
 @SuppressLint("MissingPermission")
 class Controller {
@@ -140,6 +145,50 @@ class Controller {
     val centers = mutableStateMapOf<Int, Offset>() // مواضع الأفاتارات على الشاشة
     var peek by mutableStateOf<Pair<Int, List<Int>>?>(null)  // كشف ورق خصم (5 ثوانٍ)
     var isHost = false
+    val chunks = mutableStateListOf<List<Int>>()   // قطع الترتيب التلقائي (للعرض فقط، لا تُنزَّل)
+
+    // ---- العودة للعبة السابقة بعد انقطاع الاتصال ----
+    var session by mutableStateOf<String?>(null)          // آخر لعبة كنت فيها (محفوظة على الجوال)
+    var onSession: ((String?) -> Unit)? = null
+    private var lastConn: JSONObject? = null              // كيف اتصلت (بلوتوث أو واي فاي)
+    private var myToken = ""
+    private val tokens = mutableMapOf<Int, String>()      // رموز اللاعبين (عند المضيف)
+
+    private fun saveSession(st: UiState) {
+        val conn = lastConn ?: return
+        if (isHost || myToken.isEmpty()) return
+        if (st.roundOver && st.gameOver) { clearSession(); return }
+        if (st.players.firstOrNull { it.id == st.me }?.out == true) { clearSession(); return }
+        val s = JSONObject(conn.toString()).put("pid", st.me).put("tok", myToken).put("gid", st.gid).toString()
+        if (s != session) { session = s; onSession?.invoke(s) }
+    }
+
+    fun clearSession() { if (session != null) { session = null; onSession?.invoke(null) } }
+
+    /** العودة للعبة السابقة: يتصل بنفس المضيف ويطلب مقعدك */
+    fun rejoin() {
+        val s = try { JSONObject(session ?: return) } catch (_: Exception) { return }
+        myToken = s.optString("tok")
+        val hello = JSONObject().put("t", "rejoin").put("pid", s.optInt("pid", -1))
+            .put("tok", myToken).put("gid", s.optInt("gid")).put("name", myName)
+        if (s.optString("kind") == "wifi") {
+            connectWifi(s.optString("ip"), s.optInt("port", WIFI_PORT), hello)
+        } else {
+            if (adapter?.isEnabled != true) { msg = "فعّل البلوتوث أولاً"; return }
+            val d = try { adapter?.getRemoteDevice(s.optString("addr")) } catch (_: Exception) { null }
+            if (d == null) { msg = "تعذّرت العودة للعبة"; return }
+            connect(d, hello)
+        }
+    }
+
+    /** انسحاب من اللعبة: تُحسب هزيمة، ولا عودة بعده */
+    fun withdraw() {
+        send(JSONObject().put("t", "withdraw"))
+        if (!isHost) clearSession()
+    }
+
+    /** خروج نهائي إلى القائمة */
+    fun leave() { clearSession(); reset() }
 
     // ---- سجل الفوز (محفوظ على الجوال) ----
     var winsHalf by mutableIntStateOf(0)                   // انتصارات × 2
@@ -162,8 +211,8 @@ class Controller {
     /** نهاية اللعبة: فوز كامل إن كان معي لاعب حقيقي، ونصف فوز إن كان الخصوم بوتات فقط */
     private fun recordGame(st: UiState) {
         val me = st.players.firstOrNull { it.id == st.me } ?: return
-        val minTotal = st.players.minOf { it.total }
-        val iWon = me.total == minTotal
+        val minTotal = st.players.filter { !it.out }.minOfOrNull { it.total } ?: me.total
+        val iWon = !me.out && me.total == minTotal
         val humans = st.players.count { !it.bot }
         val gain = if (iWon) (if (humans >= 2) 2 else 1) else 0
         val old = Progress.level(winsHalf)
@@ -178,8 +227,8 @@ class Controller {
         if (humans >= 2) {
             for (p in st.players) {
                 if (p.bot || p.id == me.id) continue
-                val won = iWon && p.total != minTotal
-                val lost = !iWon && p.total == minTotal
+                val won = iWon && (p.out || p.total != minTotal)
+                val lost = !iWon && !p.out && p.total == minTotal
                 if (won || lost) { val a = h2h.getOrPut(p.name) { IntArray(2) }; if (won) a[0]++ else a[1]++ }
             }
             saveH2h()
@@ -292,8 +341,24 @@ class Controller {
                         lobby.add(m.optString("name", "لاعب"))
                         recs[pid] = m.optInt("wh", 0)
                         links[pid] = link
-                        link.send(JSONObject().put("t", "joined").put("id", pid))
+                        tokens[pid] = UUID.randomUUID().toString().replace("-", "").take(16)
+                        link.send(JSONObject().put("t", "joined").put("id", pid).put("tok", tokens[pid]))
                         sendLobby()
+                    }
+                } else if (m.optString("t") == "rejoin" && pid < 0) {
+                    val e = engine
+                    val rp = m.optInt("pid", -1)
+                    val ok = e != null && rp in e.players.indices && !e.players[rp].isBot &&
+                        tokens[rp] != null && tokens[rp] == m.optString("tok") && !e.players[rp].out
+                    if (ok) {
+                        links[rp]?.close()
+                        links[rp] = link; pid = rp
+                        link.send(JSONObject().put("t", "joined").put("id", rp).put("tok", tokens[rp]))
+                        pushState()
+                    } else {
+                        val why = if (e != null && rp in e.players.indices && e.players[rp].out) "انسحبت من هذه اللعبة"
+                            else "اللعبة انتهت أو لم تعد متاحة"
+                        link.send(JSONObject().put("t", "norejoin").put("msg", why)); link.close()
                     }
                 } else if (pid >= 0) act(pid, m)
             }
@@ -310,7 +375,7 @@ class Controller {
     fun startGame() {
         val nb = effectiveBots()
         if (lobby.size + nb < 2) return
-        closeServers()
+        // تبقى الخوادم مفتوحة أثناء اللعب ليتمكن من انقطع اتصاله من العودة
         val humans = lobby.mapIndexed { i, n -> Player(i, n).also { it.winsHalf = if (i == 0) winsHalf else recs[i] ?: 0 } }
         val bots = List(nb) { Player(lobby.size + it, botName(it), isBot = true) }
         val e = Engine(humans + bots, rounds)
@@ -347,7 +412,7 @@ class Controller {
 
     /** لعبة جديدة بنفس اللاعبين والبوتات وعدد الجولات */
     private fun restart(old: Engine) {
-        val e = Engine(old.players.map { p -> Player(p.id, p.name, p.isBot).also { it.winsHalf = p.winsHalf } }, old.totalRounds)
+        val e = Engine(old.players.map { p -> Player(p.id, p.name, p.isBot).also { it.winsHalf = p.winsHalf; it.out = p.out } }, old.totalRounds)
         e.startRound(); engine = e; orders.clear()
     }
 
@@ -371,7 +436,13 @@ class Controller {
                 "react" -> e.react(pid, m.optString("e"))
                 "rec" -> { e.players.getOrNull(pid)?.winsHalf = m.optInt("wh", 0); null }
                 "order" -> { val a = m.getJSONArray("ids"); orders[pid] = List(a.length()) { a.getInt(it) }; null }
-                "newgame" -> { if (e.roundOver && e.gameOver) restart(e); null }
+                "withdraw" -> e.withdraw(pid)
+                "newgame" -> {
+                    if (e.roundOver && e.gameOver) {
+                        if (e.players.count { !it.out } < 2) "انسحب اللاعبون الآخرون — لا يمكن بدء لعبة جديدة"
+                        else { restart(e); null }
+                    } else null
+                }
                 "next" -> { if (pid == 0 && e.roundOver && !e.gameOver) e.startRound(); null }
                 else -> null
             }
@@ -400,36 +471,43 @@ class Controller {
     fun send(o: JSONObject) { if (isHost) act(0, o) else clientLink?.send(o) }
 
     // ---------------- الضيف ----------------
-    fun connect(d: BluetoothDevice) {
+    fun connect(d: BluetoothDevice, hello: JSONObject? = null) {
         isHost = false; msg = "جارٍ الاتصال..."
+        lastConn = JSONObject().put("kind", "bt").put("addr", d.address)
         thread {
             try {
                 adapter?.cancelDiscovery()
                 val s = d.createRfcommSocketToServiceRecord(APP_UUID)
                 s.connect()
-                onConnected(Link(s))
+                onConnected(Link(s), hello)
             } catch (e: Exception) { main.post { msg = "فشل الاتصال — تأكد أن المضيف فتح الاستضافة" } }
         }
     }
 
     /** الانضمام عبر الواي فاي إلى عنوان المضيف */
-    fun connectWifi(ip: String, port: Int = WIFI_PORT) {
+    fun connectWifi(ip: String, port: Int = WIFI_PORT, hello: JSONObject? = null) {
         isHost = false; msg = "جارٍ الاتصال..."
+        lastConn = JSONObject().put("kind", "wifi").put("ip", ip.trim()).put("port", port)
         thread {
             try {
                 val s = Socket()
                 s.connect(InetSocketAddress(ip.trim(), port), 4000)
-                onConnected(Link(s))
+                onConnected(Link(s), hello)
             } catch (e: Exception) { main.post { msg = "فشل الاتصال بالمضيف — تأكد أنكما على نفس الراوتر" } }
         }
     }
 
-    private fun onConnected(l: Link) {
+    private fun onConnected(l: Link, hello: JSONObject? = null) {
         clientLink = l
-        main.post { msg = ""; screen = "clientLobby" }
-        l.send(JSONObject().put("t", "join").put("name", myName).put("wh", winsHalf))
+        main.post { msg = ""; if (hello == null) screen = "clientLobby" }
+        l.send(hello ?: JSONObject().put("t", "join").put("name", myName).put("wh", winsHalf))
         l.readLoop({ m -> main.post { onServerMsg(m) } }, {
-            main.post { if (screen != "menu") { msg = "انقطع الاتصال"; reset() } }
+            main.post {
+                if (screen != "menu") {
+                    msg = if (session != null) "انقطع الاتصال — اضغط «العودة للعبة السابقة» من القائمة" else "انقطع الاتصال"
+                    reset()
+                }
+            }
         })
     }
 
@@ -471,7 +549,12 @@ class Controller {
     private fun onServerMsg(m: JSONObject) {
         when (m.optString("t")) {
             "lobby" -> { lobby.clear(); val a = m.getJSONArray("names"); for (i in 0 until a.length()) lobby.add(a.getString(i)) }
-            "state" -> { screen = "table"; applyView(m) }
+            "joined" -> { myToken = m.optString("tok") }
+            "norejoin" -> { clearSession(); msg = m.optString("msg", "تعذّرت العودة للعبة"); reset() }
+            "state" -> {
+                if (ui == null) m.optJSONObject("fx")?.let { fxSeen = it.optInt("seq", 0) }   // لا نعيد مؤثرات قديمة بعد العودة
+                screen = "table"; applyView(m); ui?.let { saveSession(it) }
+            }
             "err" -> msg = m.optString("msg")
             "full" -> { msg = "الغرفة ممتلئة"; reset() }
             "peekres" -> {
@@ -492,7 +575,7 @@ class Controller {
             PInfo(
                 o.getInt("id"), o.getString("name"), o.getInt("n"), o.getInt("total"), o.getBoolean("laid"), o.getInt("delta"),
                 List(h.length()) { k -> h.getInt(k) }, o.optInt("wh", 0), o.optBoolean("bot", false),
-                sa?.optInt(0) ?: 0, sa?.optInt(1) ?: 0, sa?.optInt(2) ?: 0
+                sa?.optInt(0) ?: 0, sa?.optInt(1) ?: 0, sa?.optInt(2) ?: 0, o.optBoolean("out", false)
             )
         }
         val hand = ints(v.getJSONArray("hand"))
@@ -514,7 +597,7 @@ class Controller {
         }
         if (st.gameOver && st.roundOver && st.gid != recordedGid) { recordedGid = st.gid; recordGame(st) }
         val sameRound = prev != null && prev.round == st.round && prev.gid == st.gid
-        if (!sameRound) { order.clear(); fresh.clear(); groups.clear() }
+        if (!sameRound) { order.clear(); fresh.clear(); groups.clear(); chunks.clear() }
         val added = hand.filter { it !in order }
         // الورقة الجديدة تظهر في أقصى اليسار بإطار ملوّن لمدة 3 ثوانٍ
         val merged = added + order.filter { it in hand }
@@ -565,12 +648,43 @@ class Controller {
     }
 
     fun moveCard(from: Int, to: Int) {
-        if (from != to && from in order.indices && to in order.indices) { order.add(to, order.removeAt(from)); pushOrder() }
+        if (from != to && from in order.indices && to in order.indices) {
+            val id = order[from]
+            val ci = chunks.indexOfFirst { id in it }
+            if (ci >= 0) chunks[ci] = chunks[ci] - id
+            order.add(to, order.removeAt(from)); pushOrder()
+        }
+    }
+
+    /** نقل مجموعة مكوّنة كاملة كأنها ورقة واحدة: anchor هي الورقة التي سُحبت، وtarget مكانها الجديد */
+    fun moveGroup(ids: List<Int>, anchor: Int, target: Int) {
+        val inOrder = order.filter { it in ids }
+        if (inOrder.size < 2) return
+        val k = inOrder.indexOf(anchor).coerceAtLeast(0)
+        val rest = order.filter { it !in ids }
+        val start = (target - k).coerceIn(0, rest.size)
+        val newOrder = rest.toMutableList().also { it.addAll(start, inOrder) }
+        if (newOrder != order.toList()) { order.clear(); order.addAll(newOrder); pushOrder() }
+    }
+
+    /** ترتيب: المجموعات المكوّنة تبقى كما هي، والباقي يُرتَّب بأنسب طريقة لتكوين المجموعات */
+    fun autoArrange() {
+        if (order.size < 2) return
+        val inHand = order.toList()
+        val kept = groups.map { g -> inHand.filter { it in g } }.filter { it.isNotEmpty() }
+        val keptIds = kept.flatten().toSet()
+        val laid = Arranger.layout(inHand.filter { it !in keptIds })
+        val newOrder = kept.flatten() + laid.flatten()
+        if (newOrder.size != inHand.size || newOrder.toSet() != inHand.toSet()) return
+        order.clear(); order.addAll(newOrder)
+        chunks.clear(); chunks.addAll(laid)
+        pushOrder()
     }
 
     /** تكوين: يجمع الأوراق المحددة في مجموعة داخل اليد بدون إنزالها */
     fun formGroup(ids: List<Int>) {
         if (ids.size < 2) return
+        chunks.removeAll { ch -> ch.any { it in ids } }
         ungroupCards(ids)
         val sorted = ids.sortedBy { order.indexOf(it) }
         val pos = order.indexOf(sorted.first()).coerceAtLeast(0)
@@ -585,7 +699,7 @@ class Controller {
     fun ungroupCards(ids: Collection<Int>) { groups.removeAll { g -> g.any { it in ids } } }
 
     fun reset() {
-        engine = null; ui = null; order.clear(); lobby.clear(); groups.clear(); fresh.clear()
+        engine = null; ui = null; order.clear(); lobby.clear(); groups.clear(); fresh.clear(); chunks.clear()
         fxEvents.clear(); hits.clear(); laughs.clear(); reacts.clear(); centers.clear(); peek = null; fxSeen = 0; orders.clear()
         closeServers(); wifiHosts.clear(); scanning = false; wifiIp = null
         links.values.forEach { it.close() }; links.clear()

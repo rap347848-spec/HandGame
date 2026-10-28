@@ -5,6 +5,7 @@ import org.json.JSONObject
 
 class Player(val id: Int, val name: String, val isBot: Boolean = false) {
     var noTake = false
+    var out = false                   // انسحب من اللعبة
     var winsHalf = 0                  // سجل الفوز (انتصارات × 2) كما أبلغ به اللاعب
     var hands = 0                     // عدد مرات «هاند» في اللعبة
     var jokers = 0                    // جوكرات أُخذت من الطاولة
@@ -75,10 +76,10 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
         stock.clear(); stock.addAll((0 until Cards.DECK).shuffled())
         discard.clear(); melds.clear()
         for (p in players) {
-            p.hand = MutableList(14) { stock.removeFirst() }
+            p.hand = if (p.out) mutableListOf() else MutableList(14) { stock.removeFirst() }
             p.laid = false
         }
-        starter = (starter + 1) % players.size
+        do { starter = (starter + 1) % players.size } while (players[starter].out)
         players[starter].hand.add(stock.removeFirst())      // الورقة رقم 15 لمن يبدأ
         turn = starter; drew = true; taken = -1; lastDiscBy = -1
         roundOver = false; roundWinner = -1; handWin = false; note = ""; deltas = emptyMap()
@@ -178,19 +179,8 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
         val cs = melds[idx].cards
         var swapped = false
         if (!Cards.isJoker(card)) {
-            val j: Int? = if (Melds.isSet(cs)) {
-                val reg = cs.filter { !Cards.isJoker(it) }
-                if (cs.size == 4 && reg.size < 4 && Cards.rank(card) == Cards.rank(reg[0]) &&
-                    reg.none { Cards.suit(it) == Cards.suit(card) }
-                ) cs.indexOfFirst { Cards.isJoker(it) } else null
-            } else {
-                val ranks = Melds.runRanks(cs)
-                val suit = cs.firstOrNull { !Cards.isJoker(it) }?.let { Cards.suit(it) }
-                if (ranks != null && suit == Cards.suit(card))
-                    cs.indices.firstOrNull { Cards.isJoker(cs[it]) && Melds.matches(card, ranks[it]) }
-                else null
-            }
-            if (j != null && j >= 0) {
+            val j: Int = Melds.jokerSwapIndex(cs, card)
+            if (j >= 0) {
                 if (!p.laid) return "لازم تكون نازلاً (نزّلت مجموعاتك) لتأخذ الجوكر"
                 val joker = cs[j]
                 cs[j] = card
@@ -228,7 +218,9 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
     }
 
     private fun nextTurn() {
-        turn = (turn + 1) % players.size
+        var t = turn
+        do { t = (t + 1) % players.size } while (players[t].out && t != turn)
+        turn = t
         drew = false; taken = -1
         deadline = System.currentTimeMillis() + TURN_MS
     }
@@ -245,9 +237,39 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
     }
 
     /** الخاسر: أعلى مجموع نقاط، وعند التعادل الأسوأ في الجولة الأخيرة */
-    fun loserId(): Int = players.maxWithOrNull(
-        compareBy<Player>({ it.total }, { it.rounds.lastOrNull() ?: 0 }, { it.id })
-    )!!.id
+    fun loserId(): Int {
+        // المنسحب هو الخاسر (وإن انسحب أكثر من واحد فالأعلى نقاطاً منهم)
+        players.filter { it.out }.maxWithOrNull(compareBy<Player>({ it.total }, { -it.id }))?.let { return it.id }
+        return players.maxWithOrNull(
+            compareBy<Player>({ it.total }, { it.rounds.lastOrNull() ?: 0 }, { it.id })
+        )!!.id
+    }
+
+    /**
+     * انسحاب لاعب: تُحسب عليه هزيمة. إن بقي خصم واحد فقط فهو الفائز باللعبة،
+     * وإن بقي أكثر من خصم تستمر اللعبة بينهم حتى يفوز أحدهم أو ينسحب.
+     */
+    fun withdraw(pid: Int): String? {
+        val p = players.getOrNull(pid) ?: return "غير صالح"
+        if (p.out) return "أنت منسحب بالفعل"
+        if (gameOver && roundOver) return "اللعبة انتهت"
+        val midRound = !roundOver
+        if (midRound && turn == pid && taken >= 0) discard.addLast(taken)   // الورقة المأخوذة ترجع للرمي
+        p.out = true
+        p.hand = mutableListOf()
+        val left = players.filter { !it.out }
+        if (left.size <= 1 || left.none { !it.isBot }) {
+            // انتهت اللعبة بالانسحاب
+            if (midRound) for (q in players) { q.rounds.add(q.pen); q.pen = 0 }
+            deltas = players.associate { it.id to 0 }
+            roundOver = true; gameOver = true; taken = -1; handWin = false
+            roundWinner = left.minByOrNull { it.total }?.id ?: -1
+            note = "انسحب ${p.name}"
+        } else if (midRound && turn == pid) {
+            nextTurn()
+        }
+        return null
+    }
 
     /**
      * رمي بيض/شبشب على لاعب. أثناء اللعب: المتصدر +1 والبقية +5 على نقاط الرامي.
@@ -275,6 +297,7 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
     private fun finish(w: Int, hand: Boolean) {
         val d = mutableMapOf<Int, Int>()
         for (p in players) {
+            if (p.out) { d[p.id] = 0; p.rounds.add(p.pen); p.pen = 0; continue }
             val s = if (p.id == w) (if (hand) -60 else -30) else {
                 val base = if (!p.laid) 100 else p.hand.sumOf { Cards.points(it) }
                 if (hand) base * 2 else base
@@ -302,7 +325,7 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
                 JSONObject().put("id", p.id).put("name", p.name).put("n", p.hand.size)
                     .put("total", p.total).put("laid", p.laid).put("delta", deltas[p.id] ?: 0)
                     .put("hist", JSONArray(p.rounds)).put("wh", p.winsHalf).put("bot", p.isBot)
-                    .put("st", JSONArray(listOf(p.hands, p.jokers, p.throws)))
+                    .put("st", JSONArray(listOf(p.hands, p.jokers, p.throws))).put("out", p.out)
             )
         })
         put("hand", JSONArray(players[pid].hand))

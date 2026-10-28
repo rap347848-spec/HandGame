@@ -42,6 +42,9 @@ class MainActivity : ComponentActivity() {
         c.onRecord = { prefs.edit().putInt("winsHalf", it).apply() }
         c.loadH2h(prefs.getString("h2h", "") ?: "")
         c.onH2h = { prefs.edit().putString("h2h", it).apply() }
+        // آخر لعبة كنت فيها (للعودة إليها بعد انقطاع الاتصال)
+        c.session = prefs.getString("session", null)
+        c.onSession = { s -> prefs.edit().also { e -> if (s == null) e.remove("session") else e.putString("session", s) }.apply() }
         // ملء الشاشة: فوق الساعة والبطارية وحافة الكاميرا (النوتش)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         if (Build.VERSION.SDK_INT >= 28) {
@@ -52,7 +55,7 @@ class MainActivity : ComponentActivity() {
         hideBars()
         Sfx.init(applicationContext)                         // الأصوات الناطقة
         MobileAds.initialize(this)                           // AdMob
-        setContent { App(c, onHost = ::host, onJoin = ::join) }
+        setContent { App(c, onHost = ::host, onJoin = ::join, onRejoin = ::rejoin) }
     }
 
     private fun hideBars() {
@@ -88,4 +91,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun join() = ensure { c.openJoin() }
+
+    private fun rejoin() = ensure(denied = { c.rejoin() }) { c.rejoin() }
 }

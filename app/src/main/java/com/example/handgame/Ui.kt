@@ -90,9 +90,12 @@ enum class Mood { HAPPY, SCARED, SAD, LAUGH }
 
 /** الأول (أقل نقاط) مبتسم، الأخير (أعلى نقاط) أحمر وحزين، والبقية خائفون */
 fun moodOf(ps: List<PInfo>, id: Int): Mood {
-    val mn = ps.minOf { it.total }
-    val mx = ps.maxOf { it.total }
-    val me = ps.first { it.id == id }.total
+    val meP = ps.first { it.id == id }
+    if (meP.out) return Mood.SAD
+    val act = ps.filter { !it.out }.ifEmpty { ps }
+    val mn = act.minOf { it.total }
+    val mx = act.maxOf { it.total }
+    val me = meP.total
     return if (mn == mx || me == mn) Mood.HAPPY else if (me == mx) Mood.SAD else Mood.SCARED
 }
 
@@ -100,13 +103,13 @@ fun moodFor(c: Controller, ps: List<PInfo>, id: Int): Mood =
     if (c.laughs.containsKey(id)) Mood.LAUGH else moodOf(ps, id)
 
 @Composable
-fun App(c: Controller, onHost: () -> Unit, onJoin: () -> Unit) {
+fun App(c: Controller, onHost: () -> Unit, onJoin: () -> Unit, onRejoin: () -> Unit = {}) {
     MaterialTheme(colorScheme = darkColorScheme(primary = Gold, onPrimary = Color.Black)) {
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Purple1, Purple2)))) {
                 Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))) {
                     when (c.screen) {
-                        "menu" -> Menu(c, onHost, onJoin)
+                        "menu" -> Menu(c, onHost, onJoin, onRejoin)
                         "hostLobby", "clientLobby" -> Lobby(c)
                         "join" -> JoinList(c)
                         "joinWifi" -> JoinWifi(c)
@@ -302,13 +305,14 @@ fun Logo(c: Controller) {
 // ---------------------------------------------------------------- القوائم
 
 @Composable
-fun Menu(c: Controller, onHost: () -> Unit, onJoin: () -> Unit) {
+fun Menu(c: Controller, onHost: () -> Unit, onJoin: () -> Unit, onRejoin: () -> Unit = {}) {
     Row(Modifier.fillMaxSize().padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 56.dp), horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { Logo(c) }
         Column(
             Modifier.weight(1.4f).background(Color(0x33FFFFFF), RoundedCornerShape(20.dp)).verticalScroll(rememberScrollState()).padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            if (c.session != null) Pill("↩ العودة للعبة السابقة", Color(0xFFF9A825), big = true) { onRejoin() }
             OutlinedTextField(c.myName, { c.rename(it) }, label = { Text("اسمك") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             val myLv = Progress.level(c.winsHalf)
             Text("مستواك $myLv · ${Progress.title(myLv)} · انتصارات ${Progress.winsText(c.winsHalf)}", color = Gold, fontSize = 12.sp, fontWeight = FontWeight.Bold)
@@ -520,7 +524,7 @@ fun Seat(
     onCenter: (Offset) -> Unit, onTap: () -> Unit, onSecret: () -> Unit, sz: Dp = 54.dp,
     level: Int = 0, react: Pair<Int, String>? = null
 ) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(Modifier.alpha(if (p.out) 0.45f else 1f), horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             Modifier.onGloballyPositioned { onCenter(it.boundsInRoot().center) }
                 .pointerInput(p.id) {
@@ -547,12 +551,12 @@ fun Seat(
                 }
             }
             Box(Modifier.align(Alignment.BottomEnd).background(Color(0xFFE53935), CircleShape).padding(horizontal = 5.dp, vertical = 1.dp)) {
-                Text("${p.n}", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Text(if (p.out) "✕" else "${p.n}", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
             if (react != null) ReactBubble(react.first, react.second, Modifier.align(Alignment.TopCenter))
         }
         Text(
-            p.name + (if (!p.bot && level > 0) "  ★$level" else "") + if (turn) " · $sec" else "",
+            p.name + (if (p.out) " · منسحب" else "") + (if (!p.bot && level > 0) "  ★$level" else "") + if (turn) " · $sec" else "",
             color = Color.White, fontSize = 11.sp, maxLines = 1,
             modifier = Modifier.background(Color(0x99000000), RoundedCornerShape(6.dp)).padding(horizontal = 6.dp)
         )
@@ -591,7 +595,7 @@ fun ScoreBoard(s: UiState, modifier: Modifier) {
             Text("النتيجة", color = Gold, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             s.players.forEach {
                 Row(Modifier.widthIn(min = 84.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(it.name.take(7), color = Color.White, fontSize = 11.sp)
+                    Text(it.name.take(7) + if (it.out) " ✕" else "", color = Color.White, fontSize = 11.sp)
                     Text("${it.total}", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
             }
@@ -646,12 +650,25 @@ fun Table(c: Controller) {
     var throwTo by remember { mutableStateOf<Int?>(null) }
     var recFor by remember { mutableStateOf<Int?>(null) }          // سجل لاعب يظهر 5 ثوانٍ
     var showReacts by remember { mutableStateOf(false) }
+    var showWithdraw by remember { mutableStateOf(false) }
+    var hoverMeld by remember { mutableStateOf<Int?>(null) }              // مجموعة على الطاولة تضيء أثناء سحب ورقة مناسبة لها
+    val flash = remember { mutableStateMapOf<Int, Int>() }                // وميض المجموعات التي أُضيفت لها ورقة
+    val prevMelds = remember { arrayOfNulls<List<List<Int>>>(1) }
+    val prevKey = remember { intArrayOf(-1) }
     LaunchedEffect(recFor) { if (recFor != null) { delay(5000); recFor = null } }
     val meldRects = remember { mutableMapOf<Int, Rect>() }
     val feltRect = remember { arrayOfNulls<Rect>(1) }
     LaunchedEffect(s.hand) {
         selected.removeAll { it !in s.hand }
         staged.removeAll { g -> !s.hand.containsAll(g) }
+    }
+    LaunchedEffect(s.melds) {
+        val key = s.gid * 100 + s.round
+        val prev = prevMelds[0]
+        if (prev != null && prevKey[0] == key) {
+            s.melds.forEachIndexed { i, g -> if (i < prev.size && prev[i] != g) flash[i] = (flash[i] ?: 0) + 1 }
+        } else flash.clear()
+        prevMelds[0] = s.melds; prevKey[0] = key
     }
     val stagedIds = staged.flatten().toSet()
     val stagedPts = staged.sumOf { Melds.value(it).coerceAtLeast(0) }
@@ -705,6 +722,13 @@ fun Table(c: Controller) {
             s.discTop < 0 -> c.msg = "لا توجد ورقة مرمية"
             else -> c.send(JSONObject().put("t", "take"))
         }
+    }
+    /** أثناء سحب ورقة: تضيء المجموعة التي تحتها إن كانت الورقة تصلح لها */
+    fun hover(id: Int, p: Offset?) {
+        val mi = if (p == null || !myTurn) null
+            else meldRects.entries.firstOrNull { it.key in s.melds.indices && it.value.contains(p) }?.key
+        hoverMeld = if (mi != null && !(id == s.taken && s.hand.size < 3) &&
+            Melds.canAdd(s.melds[mi], id, meP.laid, s.hand.size)) mi else null
     }
     /** إفلات ورقة من اليد: على مجموعة = وضعها، وعلى الطاولة = رميها. ترجع true إذا عولجت */
     fun dropCard(id: Int, p: Offset): Boolean {
@@ -778,14 +802,13 @@ fun Table(c: Controller) {
                         horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         s.melds.forEachIndexed { idx, g ->
-                            Row(
+                            MeldView(
+                                g, flash[idx] ?: 0, hoverMeld == idx,
                                 Modifier.onGloballyPositioned { meldRects[idx] = it.boundsInRoot() }
-                                    .background(Color(0x33000000), RoundedCornerShape(6.dp)).padding(3.dp).clickable {
-                                        if (myTurn && selected.size == 1) addTo(idx, selected[0])
-                                        else if (myTurn) c.msg = "حدد ورقة واحدة ثم اضغط على المجموعة (أو اسحبها إليها)"
-                                    },
-                                horizontalArrangement = Arrangement.spacedBy((-12).dp)
-                            ) { g.forEach { CardView(it, 28.dp, 40.dp) } }
+                            ) {
+                                if (myTurn && selected.size == 1) addTo(idx, selected[0])
+                                else if (myTurn) c.msg = "حدد ورقة واحدة ثم اضغط على المجموعة (أو اسحبها إليها)"
+                            }
                         }
                     }
                 }
@@ -825,6 +848,7 @@ fun Table(c: Controller) {
                     Text(meP.name, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     Text(if (myTurn) "⏱ ${s.sec}" else "${meP.total} نقطة", color = if (myTurn && s.sec <= 10) Color.Red else Gold, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
+                if (!meP.out && !(s.roundOver && s.gameOver)) Pill("انسحاب", Color(0xFFB71C1C)) { showWithdraw = true }
                 // خيارات الرمي بجانب أفاتارك
                 val rp = recFor?.let { id -> s.players.firstOrNull { it.id == id } }
                 if (rp != null) RecordCard(c, rp, s.me)
@@ -856,15 +880,39 @@ fun Table(c: Controller) {
                 } else if (canLay) Pill("نزّل", Color(0xFF2E7D32), big = true) { sendMeld() }
                 if (myTurn && s.drew && selected.size == 1 && s.taken < 0) Pill("ارمِ", Color(0xFFC62828)) { discard(selected[0]) }
                 Pill("😀", Color(0xFF455A64)) { showReacts = !showReacts }
+                Pill("ترتيب", Color(0xFF6A1B9A)) { c.autoArrange() }
                 Pill(if (twoRows) "سطر واحد" else "سطرين", Color(0xFF455A64)) { twoRows = !twoRows }
               }
             }
             }
 
             Spacer(Modifier.height(6.dp))      // فراغ بسيط بين الطاولة وورق اللاعب
-            Hand(c, selected, stagedIds, s.taken, twoRows, ::discard, ::dropCard)
+            if (meP.out) {
+                Row(
+                    Modifier.fillMaxWidth().height(90.dp), horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("انسحبت من اللعبة — تتابعها كمشاهد", color = Color(0xFFFFCC80), fontWeight = FontWeight.Bold)
+                    if (!c.isHost) { Spacer(Modifier.width(12.dp)); Pill("خروج", Color(0xFF6D4C41)) { c.leave() } }
+                }
+            } else Hand(c, selected, stagedIds, s.taken, twoRows, ::discard, ::dropCard, ::hover)
         }
 
+        if (showWithdraw) {
+            val foes = s.players.filter { !it.out && it.id != s.me }
+            AlertDialog(
+                onDismissRequest = { showWithdraw = false },
+                title = { Text("الانسحاب من اللعبة") },
+                text = {
+                    Text(
+                        if (foes.size == 1) "إذا انسحبت سيفوز ${foes[0].name} باللعبة."
+                        else "إذا انسحبت تُحسب عليك هزيمة، وتستمر اللعبة بين اللاعبين المتبقين."
+                    )
+                },
+                confirmButton = { TextButton(onClick = { showWithdraw = false; c.withdraw() }) { Text("انسحاب", color = Color(0xFFFF5252)) } },
+                dismissButton = { TextButton(onClick = { showWithdraw = false }) { Text("إلغاء") } }
+            )
+        }
         if (showReacts) Row(
             Modifier.align(Alignment.BottomStart).padding(start = 8.dp, bottom = 140.dp).zIndex(20f)
                 .background(Color(0xE61A0B3B), RoundedCornerShape(14.dp)).padding(horizontal = 6.dp),
@@ -880,17 +928,44 @@ fun Table(c: Controller) {
     }
 }
 
-/** الورق باليد: سطر أو سطران، ترتيب يدوي بالسحب، ضغطتان للرمي، وسحب إلى الطاولة */
+/** مجموعة على الطاولة: تضيء أثناء سحب ورقة مناسبة فوقها، وتومض بعد إضافة ورقة إليها */
+@Composable
+fun MeldView(g: List<Int>, flashKey: Int, glow: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    val blink = remember { Animatable(0f) }
+    LaunchedEffect(flashKey) {
+        if (flashKey > 0) repeat(3) { blink.animateTo(1f, tween(170)); blink.animateTo(0f, tween(170)) }
+    }
+    val pulse = if (glow) rememberInfiniteTransition(label = "mg").animateFloat(
+        1f, 1.1f, infiniteRepeatable(tween(420), RepeatMode.Reverse), label = "mgs"
+    ) else null
+    val shape = RoundedCornerShape(6.dp)
+    Row(
+        modifier
+            .graphicsLayer { val k = if (pulse != null) pulse.value else 1f + blink.value * 0.06f; scaleX = k; scaleY = k }
+            .then(if (glow) Modifier.shadow(14.dp, shape, clip = false, ambientColor = Good, spotColor = Good) else Modifier)
+            .background(Color(0x33000000), shape)
+            .background(Gold.copy(alpha = blink.value * 0.6f), shape)
+            .border(if (glow) 3.dp else if (blink.value > 0.02f) 2.dp else 0.dp, if (glow) Good else Gold, shape)
+            .padding(3.dp).clickable(onClick = onClick),
+        horizontalArrangement = Arrangement.spacedBy((-12).dp)
+    ) { g.forEach { CardView(it, 28.dp, 40.dp) } }
+}
+
+/** الورق باليد: سطر أو سطران، ترتيب يدوي بالسحب (والمجموعة المكوّنة تُسحب كلها كورقة واحدة)، ضغطتان للرمي، وسحب إلى الطاولة */
 @Composable
 fun Hand(
     c: Controller, selected: SnapshotStateList<Int>, stagedIds: Set<Int>, takenId: Int, twoRows: Boolean,
-    onDiscard: (Int) -> Unit, onDrop: (Int, Offset) -> Boolean
+    onDiscard: (Int) -> Unit, onDrop: (Int, Offset) -> Boolean, onHover: (Int, Offset?) -> Unit = { _, _ -> }
 ) {
     val n = c.order.size
     val rowsCount = if (twoRows && n > 7) 2 else 1
     val discardNow = rememberUpdatedState(onDiscard)
     val dropNow = rememberUpdatedState(onDrop)
+    val hoverNow = rememberUpdatedState(onHover)
     var origin by remember { mutableStateOf(Offset.Zero) }
+    var dragIds by remember { mutableStateOf<Set<Int>>(emptySet()) }     // الأوراق التي تُسحب الآن (ورقة، أو مجموعة كاملة)
+    var gdx by remember { mutableFloatStateOf(0f) }
+    var gdy by remember { mutableFloatStateOf(0f) }
 
     // لكل مجموعة مكوّنة لونها الخاص، ويبقى لونها ثابتاً ما دامت قائمة (لا يتغير بفك مجموعة أخرى)
     val gColor = remember { mutableStateMapOf<Int, Int>() }
@@ -926,8 +1001,11 @@ fun Hand(
         val gapPx = with(d) { 14.dp.toPx() }
         val widthPx = with(d) { maxWidth.toPx() }
 
-        // كل مجموعة منعزلة عن غيرها: فراغ بين الورق المكوّن والذي بجانبه من مجموعة أخرى
-        val gid = c.order.map { id -> c.groups.indexOfFirst { id in it } }
+        // كل مجموعة (أو قطعة من «ترتيب») منعزلة عن غيرها: فراغ بين الورق المكوّن والذي بجانبه
+        val gid = c.order.map { id ->
+            val g = c.groups.indexOfFirst { id in it }
+            if (g >= 0) g else { val k = c.chunks.indexOfFirst { id in it }; if (k >= 0) 1000 + k else -1 }
+        }
         val extra = FloatArray(maxOf(n, 1))
         val rowGap = FloatArray(maxOf(1, (n + perRow - 1) / perRow))
         var acc = 0f
@@ -947,9 +1025,7 @@ fun Hand(
 
         c.order.forEachIndexed { i, id ->
             key(id) {
-                var dx by remember { mutableFloatStateOf(0f) }
-                var dy by remember { mutableFloatStateOf(0f) }
-                var drag by remember { mutableStateOf(false) }
+                val drag = id in dragIds
                 val sel = id in selected
                 val col = i % perRow
                 val row = i / perRow
@@ -961,8 +1037,13 @@ fun Hand(
                 val baseX = rowStart(row) + col * stepPx + extra[i]
                 Box(
                     Modifier
-                        .offset { IntOffset((baseX + dx).roundToInt(), (row * rowPx + (if (sel) 0f else raisePx) + dy).roundToInt()) }
-                        .zIndex(if (drag) 100f else (row * 30 + col).toFloat())
+                        .offset {
+                            IntOffset(
+                                (baseX + (if (drag) gdx else 0f)).roundToInt(),
+                                (row * rowPx + (if (sel) 0f else raisePx) + (if (drag) gdy else 0f)).roundToInt()
+                            )
+                        }
+                        .zIndex(if (drag) 100f + col else (row * 30 + col).toFloat())
                         .pointerInput(id, stagedIds) {
                             detectTapGestures(
                                 onTap = {
@@ -978,22 +1059,40 @@ fun Hand(
                         }
                         .pointerInput(id, i, n, perRow) {
                             detectDragGestures(
-                                onDragStart = { drag = true },
-                                onDragEnd = {
-                                    val center = Offset(
-                                        origin.x + baseX + dx + cwPx / 2,
-                                        origin.y + row * rowPx + (if (id in selected) 0f else raisePx) + dy + chPx / 2
-                                    )
-                                    val handled = dropNow.value(id, center)
-                                    if (!handled) {
-                                        val tc = (col + dx / stepPx).roundToInt().coerceIn(0, perRow - 1)
-                                        val tr = (row + dy / rowPx).roundToInt().coerceIn(0, rowsCount - 1)
-                                        val t = (tr * perRow + tc).coerceIn(0, n - 1)
-                                        dx = 0f; dy = 0f; drag = false; c.moveCard(i, t)
-                                    } else { dx = 0f; dy = 0f; drag = false }
+                                onDragStart = {
+                                    val grp = c.groups.firstOrNull { id in it }
+                                    dragIds = if (grp != null && grp.size > 1) grp.toSet() else setOf(id)
+                                    gdx = 0f; gdy = 0f
                                 },
-                                onDragCancel = { dx = 0f; dy = 0f; drag = false },
-                                onDrag = { ch2, a -> ch2.consume(); dx += a.x; dy += a.y }
+                                onDragEnd = {
+                                    val ddx = gdx
+                                    val ddy = gdy
+                                    val ids = dragIds
+                                    val center = Offset(
+                                        origin.x + baseX + ddx + cwPx / 2,
+                                        origin.y + row * rowPx + (if (id in selected) 0f else raisePx) + ddy + chPx / 2
+                                    )
+                                    hoverNow.value(id, null)
+                                    val handled = ids.size <= 1 && dropNow.value(id, center)
+                                    dragIds = emptySet(); gdx = 0f; gdy = 0f
+                                    if (!handled) {
+                                        val tc = (col + ddx / stepPx).roundToInt().coerceIn(0, perRow - 1)
+                                        val tr = (row + ddy / rowPx).roundToInt().coerceIn(0, rowsCount - 1)
+                                        val t = (tr * perRow + tc).coerceIn(0, n - 1)
+                                        if (ids.size > 1) c.moveGroup(ids.toList(), id, t) else c.moveCard(i, t)
+                                    }
+                                },
+                                onDragCancel = { dragIds = emptySet(); gdx = 0f; gdy = 0f; hoverNow.value(id, null) },
+                                onDrag = { ch2, a ->
+                                    ch2.consume(); gdx += a.x; gdy += a.y
+                                    if (dragIds.size <= 1) hoverNow.value(
+                                        id,
+                                        Offset(
+                                            origin.x + baseX + gdx + cwPx / 2,
+                                            origin.y + row * rowPx + (if (id in selected) 0f else raisePx) + gdy + chPx / 2
+                                        )
+                                    )
+                                }
                             )
                         }
                 ) { CardView(id, cw, ch, if (id in stagedIds) 0.45f else 1f, bColor) }
@@ -1076,21 +1175,23 @@ fun FinalScene(c: Controller, s: UiState) {
                                     c.send(JSONObject().put("t", "throw").put("to", p.id).put("kind", "slipper"))
                                 }
                         ) { Halo(lv, 70.dp) { Avatar(p.id, mood, 70.dp, c.hits[p.id]?.kind, nose = isLoser) } }
-                        Text(p.name + if (p.id == s.me) " (أنت)" else "", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        Text(p.name + (if (p.id == s.me) " (أنت)" else "") + (if (p.out) " · منسحب" else ""), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         if (!p.bot) Text("مستوى $lv · ${Progress.title(lv)}", color = Color(0xFFB0BEC5), fontSize = 10.sp)
                         Text("${p.total}", color = Gold, fontSize = 16.sp, fontWeight = FontWeight.Black)
                     }
                 }
             }
             Text(
-                if (s.me == loser.id) "أنت الخاسر... استعد 😅" else "اضغط على وجه الخاسر لضربه بالشبشب",
+                if (s.me == loser.id) (if (loser.out) "انسحبت... وخسرت 😅" else "أنت الخاسر... استعد 😅")
+                else if (loser.out) "${loser.name} انسحب — اضغط على وجهه لضربه بالشبشب" else "اضغط على وجه الخاسر لضربه بالشبشب",
                 color = Color(0xFFFFCC80), fontSize = 12.sp
             )
             awards.forEach { Text(it, color = Color.White, fontSize = 12.sp) }
             if (duels.isNotEmpty()) Text("المواجهات — " + duels.joinToString("  |  "), color = Color(0xFF80CBC4), fontSize = 12.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Pill("لعبة جديدة بنفس اللاعبين", Color(0xFF2E7D32), big = true) { c.send(JSONObject().put("t", "newgame")) }
-                Pill("خروج", Color(0xFF6D4C41), big = true) { c.reset() }
+                if (s.players.count { !it.out } >= 2 && s.players.firstOrNull { it.id == s.me }?.out != true)
+                    Pill("لعبة جديدة بنفس اللاعبين", Color(0xFF2E7D32), big = true) { c.send(JSONObject().put("t", "newgame")) }
+                Pill("خروج", Color(0xFF6D4C41), big = true) { c.leave() }
             }
         }
     }
