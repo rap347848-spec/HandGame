@@ -165,8 +165,19 @@ class Controller {
 
     fun clearSession() { if (session != null) { session = null; onSession?.invoke(null) } }
 
+    private var autoTries = 0
+
+    /** إعادة محاولة العودة تلقائياً بعد انقطاع الاتصال (حتى 5 محاولات) */
+    private fun scheduleRejoin() {
+        if (session == null || autoTries >= 5) return
+        autoTries++
+        main.postDelayed({ if (screen == "menu" && ui == null && session != null) doRejoin() }, 3000)
+    }
+
     /** العودة للعبة السابقة: يتصل بنفس المضيف ويطلب مقعدك */
-    fun rejoin() {
+    fun rejoin() { autoTries = 0; doRejoin() }
+
+    private fun doRejoin() {
         val s = try { JSONObject(session ?: return) } catch (_: Exception) { return }
         myToken = s.optString("tok")
         val hello = JSONObject().put("t", "rejoin").put("pid", s.optInt("pid", -1))
@@ -429,7 +440,7 @@ class Controller {
                 "take" -> e.takeDiscard(pid)
                 "return" -> e.returnTaken(pid)
                 "meld" -> e.meld(pid, groupsOf(m))
-                "add" -> e.addToMeld(pid, m.getInt("meld"), m.getInt("card"))
+                "add" -> e.addToMeld(pid, m.getInt("meld"), m.getInt("card"), m.optInt("end", -1))
                 "discard" -> e.discardCard(pid, m.getInt("card"))
                 "throw" -> e.throwAt(pid, m.getInt("to"), m.getString("kind"))
                 "peek" -> { handlePeek(e, pid, m.getInt("to")); null }
@@ -480,7 +491,7 @@ class Controller {
                 val s = d.createRfcommSocketToServiceRecord(APP_UUID)
                 s.connect()
                 onConnected(Link(s), hello)
-            } catch (e: Exception) { main.post { msg = "فشل الاتصال — تأكد أن المضيف فتح الاستضافة" } }
+            } catch (e: Exception) { main.post { msg = "فشل الاتصال — تأكد أن المضيف فتح الاستضافة"; if (hello != null) scheduleRejoin() } }
         }
     }
 
@@ -493,7 +504,7 @@ class Controller {
                 val s = Socket()
                 s.connect(InetSocketAddress(ip.trim(), port), 4000)
                 onConnected(Link(s), hello)
-            } catch (e: Exception) { main.post { msg = "فشل الاتصال بالمضيف — تأكد أنكما على نفس الراوتر" } }
+            } catch (e: Exception) { main.post { msg = "فشل الاتصال بالمضيف — تأكد أنكما على نفس الراوتر"; if (hello != null) scheduleRejoin() } }
         }
     }
 
@@ -504,8 +515,9 @@ class Controller {
         l.readLoop({ m -> main.post { onServerMsg(m) } }, {
             main.post {
                 if (screen != "menu") {
-                    msg = if (session != null) "انقطع الاتصال — اضغط «العودة للعبة السابقة» من القائمة" else "انقطع الاتصال"
+                    msg = if (session != null) "انقطع الاتصال — جارٍ محاولة العودة للعبة..." else "انقطع الاتصال"
                     reset()
+                    scheduleRejoin()
                 }
             }
         })
@@ -553,7 +565,7 @@ class Controller {
             "norejoin" -> { clearSession(); msg = m.optString("msg", "تعذّرت العودة للعبة"); reset() }
             "state" -> {
                 if (ui == null) m.optJSONObject("fx")?.let { fxSeen = it.optInt("seq", 0) }   // لا نعيد مؤثرات قديمة بعد العودة
-                screen = "table"; applyView(m); ui?.let { saveSession(it) }
+                screen = "table"; autoTries = 0; applyView(m); ui?.let { saveSession(it) }
             }
             "err" -> msg = m.optString("msg")
             "full" -> { msg = "الغرفة ممتلئة"; reset() }

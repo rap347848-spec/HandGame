@@ -15,8 +15,14 @@ import com.google.android.gms.ads.MobileAds
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 
+/** اللعبة تعيش مع العملية لا مع الشاشة: لو أُغلقت الشاشة بالخطأ ثم فُتح التطبيق تكمل اللعبة من حيث كانت */
+object GameHolder {
+    val c = Controller()
+    var ready = false
+}
+
 class MainActivity : ComponentActivity() {
-    private val c = Controller()
+    private val c = GameHolder.c
     private var pending: (() -> Unit)? = null
     private var onDenied: (() -> Unit)? = null
 
@@ -36,15 +42,18 @@ class MainActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         // اسم اللاعب يُحفظ على الجوال ويمكن تغييره من شاشة البداية
         val prefs = getSharedPreferences("handremmy", MODE_PRIVATE)
-        c.rename(prefs.getString("name", "لاعب") ?: "لاعب")
-        c.onName = { prefs.edit().putString("name", it).apply() }
-        c.winsHalf = prefs.getInt("winsHalf", 0)
-        c.onRecord = { prefs.edit().putInt("winsHalf", it).apply() }
-        c.loadH2h(prefs.getString("h2h", "") ?: "")
-        c.onH2h = { prefs.edit().putString("h2h", it).apply() }
-        // آخر لعبة كنت فيها (للعودة إليها بعد انقطاع الاتصال)
-        c.session = prefs.getString("session", null)
-        c.onSession = { s -> prefs.edit().also { e -> if (s == null) e.remove("session") else e.putString("session", s) }.apply() }
+        if (!GameHolder.ready) {          // أول تشغيل للعملية فقط (لا نمسح لعبة جارية عند إعادة فتح الشاشة)
+            GameHolder.ready = true
+            c.rename(prefs.getString("name", "لاعب") ?: "لاعب")
+            c.onName = { prefs.edit().putString("name", it).apply() }
+            c.winsHalf = prefs.getInt("winsHalf", 0)
+            c.onRecord = { prefs.edit().putInt("winsHalf", it).apply() }
+            c.loadH2h(prefs.getString("h2h", "") ?: "")
+            c.onH2h = { prefs.edit().putString("h2h", it).apply() }
+            // آخر لعبة كنت فيها (للعودة إليها بعد انقطاع الاتصال)
+            c.session = prefs.getString("session", null)
+            c.onSession = { s -> prefs.edit().also { e -> if (s == null) e.remove("session") else e.putString("session", s) }.apply() }
+        }
         // ملء الشاشة: فوق الساعة والبطارية وحافة الكاميرا (النوتش)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         if (Build.VERSION.SDK_INT >= 28) {
@@ -55,7 +64,7 @@ class MainActivity : ComponentActivity() {
         hideBars()
         Sfx.init(applicationContext)                         // الأصوات الناطقة
         MobileAds.initialize(this)                           // AdMob
-        setContent { App(c, onHost = ::host, onJoin = ::join, onRejoin = ::rejoin) }
+        setContent { App(c, onHost = ::host, onJoin = ::join, onRejoin = ::rejoin, onMinimize = { moveTaskToBack(true) }) }
     }
 
     private fun hideBars() {

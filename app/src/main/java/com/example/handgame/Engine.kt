@@ -171,7 +171,7 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
      * أخذ الجوكر: يأخذه من يضع الورقة التي يمثلها الجوكر بحسب موقعه كما نزل في التسلسل،
      * وفي التشكيلة (الكاملة 4 أوراق) من يضع آخر نوع ناقص. وإلا تُضاف الورقة بشرط أنك نزّلت سابقاً.
      */
-    fun addToMeld(pid: Int, idx: Int, card: Int): String? {
+    fun addToMeld(pid: Int, idx: Int, card: Int, end: Int = -1): String? {
         check(pid)?.let { return it }
         val p = players[pid]
         if (idx !in melds.indices || card !in p.hand) return "غير صالح"
@@ -192,7 +192,7 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
         if (!swapped) {
             if (p.hand.size <= 1) return "لازم تبقي ورقة ترميها على الطاولة"
             if (!p.laid) return "لازم تنزّل أولاً (أو ضع الورقة التي يمثلها الجوكر لتأخذه)"
-            val nl = Melds.extend(cs, card) ?: return "الورقة لا تناسب هذه المجموعة"
+            val nl = Melds.extend(cs, card, end) ?: return "الورقة لا تناسب هذه المجموعة"
             cs.clear(); cs.addAll(nl); p.hand.remove(card)
         }
         if (card == taken) taken = -1

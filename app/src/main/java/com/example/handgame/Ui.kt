@@ -1,5 +1,6 @@
 package com.example.handgame
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
@@ -103,7 +104,11 @@ fun moodFor(c: Controller, ps: List<PInfo>, id: Int): Mood =
     if (c.laughs.containsKey(id)) Mood.LAUGH else moodOf(ps, id)
 
 @Composable
-fun App(c: Controller, onHost: () -> Unit, onJoin: () -> Unit, onRejoin: () -> Unit = {}) {
+fun App(c: Controller, onHost: () -> Unit, onJoin: () -> Unit, onRejoin: () -> Unit = {}, onMinimize: () -> Unit = {}) {
+    // زر الرجوع لا يُخرجك من اللعبة بالخطأ: أثناء اللعب يُصغّر التطبيق فقط، وفي الانتظار يرجع للقائمة
+    BackHandler(enabled = c.screen != "menu") {
+        if (c.screen == "table") onMinimize() else c.reset()
+    }
     MaterialTheme(colorScheme = darkColorScheme(primary = Gold, onPrimary = Color.Black)) {
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Purple1, Purple2)))) {
@@ -651,6 +656,7 @@ fun Table(c: Controller) {
     var recFor by remember { mutableStateOf<Int?>(null) }          // سجل لاعب يظهر 5 ثوانٍ
     var showReacts by remember { mutableStateOf(false) }
     var showWithdraw by remember { mutableStateOf(false) }
+    var pendingJoker by remember { mutableStateOf<Pair<Int, Int>?>(null) }   // (رقم المجموعة، الجوكر) بانتظار اختيار الطرف
     var hoverMeld by remember { mutableStateOf<Int?>(null) }              // مجموعة على الطاولة تضيء أثناء سحب ورقة مناسبة لها
     val flash = remember { mutableStateMapOf<Int, Int>() }                // وميض المجموعات التي أُضيفت لها ورقة
     val prevMelds = remember { arrayOfNulls<List<List<Int>>>(1) }
@@ -711,9 +717,14 @@ fun Table(c: Controller) {
         if (!myTurn) c.msg = "ليس دورك" else if (!s.drew) c.msg = "اسحب ورقة أولاً"
         else { c.send(JSONObject().put("t", "discard").put("card", id)); selected.remove(id); staged.clear() }
     }
-    fun addTo(idx: Int, id: Int) {
-        if (!myTurn) c.msg = "ليس دورك"
-        else { c.send(JSONObject().put("t", "add").put("meld", idx).put("card", id)); selected.remove(id) }
+    fun addTo(idx: Int, id: Int, end: Int = -1) {
+        if (!myTurn) { c.msg = "ليس دورك"; return }
+        if (end < 0 && Cards.isJoker(id) && idx in s.melds.indices) {
+            // جوكر على تسلسل يمكن وضعه من الطرفين: اسأل اللاعب بدل أي ورقة
+            val ends = Melds.runEnds(s.melds[idx])
+            if (ends != null && ends.first != null && ends.second != null) { pendingJoker = idx to id; return }
+        }
+        c.send(JSONObject().put("t", "add").put("meld", idx).put("card", id).put("end", end)); selected.remove(id)
     }
     fun takeTop() {
         when {
@@ -898,6 +909,22 @@ fun Table(c: Controller) {
             } else Hand(c, selected, stagedIds, s.taken, twoRows, ::discard, ::dropCard, ::hover)
         }
 
+        pendingJoker?.let { (mi, cardId) ->
+            val ends = s.melds.getOrNull(mi)?.let { Melds.runEnds(it) }
+            val lo = ends?.first
+            val hi = ends?.second
+            if (lo == null || hi == null) {
+                pendingJoker = null
+            } else {
+                AlertDialog(
+                    onDismissRequest = { pendingJoker = null },
+                    title = { Text("الجوكر بدل أي ورقة؟") },
+                    text = { Text("اختر الورقة التي يمثلها الجوكر في هذا التسلسل.") },
+                    confirmButton = { TextButton(onClick = { pendingJoker = null; addTo(mi, cardId, 1) }) { Text("بدل ${Melds.rankName(hi)}") } },
+                    dismissButton = { TextButton(onClick = { pendingJoker = null; addTo(mi, cardId, 0) }) { Text("بدل ${Melds.rankName(lo)}") } }
+                )
+            }
+        }
         if (showWithdraw) {
             val foes = s.players.filter { !it.out && it.id != s.me }
             AlertDialog(

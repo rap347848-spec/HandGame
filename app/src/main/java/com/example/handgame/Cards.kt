@@ -159,7 +159,24 @@ object Melds {
      * يضيف ورقة إلى مجموعة على الطاولة (بدون تغيير مواقع ما فيها)، أو null إن لم تناسب.
      * التسلسل يمتد من طرفيه فقط، والتشكيلة حتى 4 أوراق.
      */
-    fun extend(cs: List<Int>, card: Int): List<Int>? {
+    /** اسم الرقم للعرض (1 و14 = A) */
+    fun rankName(r: Int): String = when (r) { 1, 14 -> "A"; 11 -> "J"; 12 -> "Q"; 13 -> "K"; else -> r.toString() }
+
+    /**
+     * رقما الطرفين اللذين يمكن للجوكر أن يمثلهما في تسلسل: (قبل أول ورقة، بعد آخر ورقة)،
+     * وأي طرف غير ممكن يكون null. يرجع null إن لم تكن المجموعة تسلسلاً.
+     */
+    fun runEnds(cs: List<Int>): Pair<Int?, Int?>? {
+        if (isSet(cs)) return null
+        val ranks = runRanks(cs) ?: return null
+        val dir = if (ranks[1] > ranks[0]) 1 else -1
+        val after = ranks.last() + dir
+        val before = ranks.first() - dir
+        return (if (before in 1..14) before else null) to (if (after in 1..14) after else null)
+    }
+
+    /** end للجوكر في التسلسل: 0 = في أول التسلسل، 1 = في آخره، -1 = تلقائي */
+    fun extend(cs: List<Int>, card: Int, end: Int = -1): List<Int>? {
         if (Cards.isJoker(card) && cs.any { Cards.isJoker(it) }) return null   // جوكر واحد فقط في كل مجموعة
         if (isSet(cs)) {
             if (cs.size >= 4) return null
@@ -173,9 +190,11 @@ object Melds {
         val after = ranks.last() + dir
         val before = ranks.first() - dir
         if (Cards.isJoker(card)) {
-            if (after in 1..14) return cs + card
-            if (before in 1..14) return listOf(card) + cs
-            return null
+            return when (end) {
+                0 -> if (before in 1..14) listOf(card) + cs else null
+                1 -> if (after in 1..14) cs + card else null
+                else -> if (after in 1..14) cs + card else if (before in 1..14) listOf(card) + cs else null
+            }
         }
         val suit = Cards.suit(cs.first { !Cards.isJoker(it) })
         if (Cards.suit(card) != suit) return null
