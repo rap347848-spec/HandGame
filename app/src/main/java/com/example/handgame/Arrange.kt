@@ -19,6 +19,16 @@ object Arranger {
         } else if (ra == rb) 3 else 0                                           // نفس الرقم بنوعين مختلفين
     }
 
+    /** كل ضغطة على «ترتيب» تعطي ترتيباً مختلفاً: 0 حسب المجموعات، 1 حسب النوع، 2 حسب الرقم */
+    const val MODES = 3
+    val MODE_NAMES = listOf("حسب المجموعات", "حسب النوع", "حسب الرقم")
+
+    fun byMode(free: List<Int>, mode: Int): List<Int> = when (mode) {
+        1 -> free.sortedWith(compareBy({ if (Cards.isJoker(it)) -1 else Cards.suit(it) }, { Cards.rank(it) }))
+        2 -> free.sortedWith(compareBy({ if (Cards.isJoker(it)) -1 else Cards.rank(it) }, { Cards.suit(it) }))
+        else -> layout(free).flatten()
+    }
+
     /**
      * يرجع قطعاً مرتبة: كل قطعة مجموعة كاملة، أو زوج قريب من التكوين، أو أوراق متفرقة من نوع واحد.
      * ترتيب القطع هو ترتيب العرض في اليد (من اليسار).

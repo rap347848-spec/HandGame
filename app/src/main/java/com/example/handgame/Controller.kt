@@ -597,7 +597,7 @@ class Controller {
         }
         if (st.gameOver && st.roundOver && st.gid != recordedGid) { recordedGid = st.gid; recordGame(st) }
         val sameRound = prev != null && prev.round == st.round && prev.gid == st.gid
-        if (!sameRound) { order.clear(); fresh.clear(); groups.clear(); chunks.clear() }
+        if (!sameRound) { order.clear(); fresh.clear(); groups.clear(); chunks.clear(); arrangeMode = 0 }
         val added = hand.filter { it !in order }
         // الورقة الجديدة تظهر في أقصى اليسار بإطار ملوّن لمدة 3 ثوانٍ
         val merged = added + order.filter { it in hand }
@@ -667,18 +667,30 @@ class Controller {
         if (newOrder != order.toList()) { order.clear(); order.addAll(newOrder); pushOrder() }
     }
 
-    /** ترتيب: المجموعات المكوّنة تبقى كما هي، والباقي يُرتَّب بأنسب طريقة لتكوين المجموعات */
+    private var arrangeMode = 0
+
+    /**
+     * ترتيب: كل ضغطة تعطي ترتيباً مختلفاً (حسب المجموعات، ثم النوع، ثم الرقم) والأوراق متجاورة بلا فراغات.
+     * المجموعات المكوّنة تبقى كما هي في أول اليد.
+     */
     fun autoArrange() {
         if (order.size < 2) return
         val inHand = order.toList()
         val kept = groups.map { g -> inHand.filter { it in g } }.filter { it.isNotEmpty() }
         val keptIds = kept.flatten().toSet()
-        val laid = Arranger.layout(inHand.filter { it !in keptIds })
-        val newOrder = kept.flatten() + laid.flatten()
-        if (newOrder.size != inHand.size || newOrder.toSet() != inHand.toSet()) return
-        order.clear(); order.addAll(newOrder)
-        chunks.clear(); chunks.addAll(laid)
-        pushOrder()
+        val free = inHand.filter { it !in keptIds }
+        chunks.clear()
+        for (attempt in 0 until Arranger.MODES) {
+            val mode = arrangeMode
+            arrangeMode = (arrangeMode + 1) % Arranger.MODES
+            val newOrder = kept.flatten() + Arranger.byMode(free, mode)
+            if (newOrder.size != inHand.size || newOrder.toSet() != inHand.toSet()) return
+            if (newOrder == inHand && attempt < Arranger.MODES - 1) continue     // نفس الترتيب الحالي: جرّب التالي
+            order.clear(); order.addAll(newOrder)
+            msg = "ترتيب " + Arranger.MODE_NAMES[mode]
+            pushOrder()
+            return
+        }
     }
 
     /** تكوين: يجمع الأوراق المحددة في مجموعة داخل اليد بدون إنزالها */
