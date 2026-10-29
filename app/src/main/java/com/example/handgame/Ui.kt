@@ -950,7 +950,52 @@ fun Table(c: Controller) {
             }
         }
         ScoreBoard(s, Modifier.align(Alignment.TopEnd).padding(6.dp).zIndex(10f))
-        Text("هاند رمي غزة · $CREDIT", Modifier.align(Alignment.TopStart).padding(8.dp), color = Color(0x88FFFFFF), fontSize = 10.sp)
+        val paused = s.ps == 2
+        val pending = s.ps == 1
+        val byName = s.players.getOrNull(s.pby)?.name ?: ""
+        Column(Modifier.align(Alignment.TopStart).padding(6.dp).zIndex(30f)) {
+            if (!s.roundOver && !meP.out) {
+                Pill(
+                    when {
+                        paused -> "▶ استئناف"
+                        pending && s.pby == s.me -> "إلغاء الطلب"
+                        pending -> "⏸ بانتظار الرد"
+                        else -> "⏸ إيقاف"
+                    },
+                    Color(0xFF455A64), enabled = !(pending && s.pby != s.me)
+                ) {
+                    c.send(JSONObject().put("t", if (paused) "resume" else if (pending) "pausecancel" else "pausereq"))
+                }
+            }
+            Text("هاند رمي غزة · $CREDIT", Modifier.padding(start = 2.dp, top = 2.dp), color = Color(0x88FFFFFF), fontSize = 10.sp)
+        }
+        if (pending && s.pby == s.me && !s.roundOver) {
+            Text(
+                "بانتظار موافقة الآخرين...", Modifier.align(Alignment.TopCenter).padding(top = 48.dp).zIndex(30f),
+                color = Gold, fontSize = 12.sp, fontWeight = FontWeight.Bold
+            )
+        }
+        if (pending && s.pby != s.me && s.me !in s.pans && !meP.out && !s.roundOver) {
+            AlertDialog(
+                onDismissRequest = {},
+                title = { Text("طلب إيقاف مؤقت") },
+                text = { Text("$byName يطلب إيقاف اللعبة مؤقتاً. هل توافق؟") },
+                confirmButton = { TextButton(onClick = { c.send(JSONObject().put("t", "pauseans").put("ok", true)) }) { Text("موافقة") } },
+                dismissButton = { TextButton(onClick = { c.send(JSONObject().put("t", "pauseans").put("ok", false)) }) { Text("رفض", color = Color(0xFFFF5252)) } }
+            )
+        }
+        if (paused && !s.roundOver) {
+            Box(
+                Modifier.fillMaxSize().zIndex(80f).background(Color(0xDD000000)).pointerInput(Unit) { detectTapGestures { } },
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("⏸ اللعبة متوقفة مؤقتاً", color = Gold, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    if (byName.isNotEmpty()) Text("أوقفها $byName", color = Color.White, fontSize = 14.sp)
+                    if (!meP.out) Pill("▶ استئناف", Color(0xFF2E7D32), big = true) { c.send(JSONObject().put("t", "resume")) }
+                }
+            }
+        }
         if (s.roundOver) { if (s.gameOver) FinalScene(c, s) else RoundOver(c, s) }
     }
 }

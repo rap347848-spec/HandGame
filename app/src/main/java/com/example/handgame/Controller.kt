@@ -75,7 +75,8 @@ class UiState(
     val me: Int, val round: Int, val rounds: Int, val turn: Int, val drew: Boolean, val sec: Int,
     val stock: Int, val discTop: Int, val players: List<PInfo>, val hand: List<Int>,
     val melds: List<List<Int>>, val roundOver: Boolean, val gameOver: Boolean, val note: String,
-    val dby: Int, val rw: Int, val hw: Boolean, val taken: Int, val gid: Int, val dn: Int = 0
+    val dby: Int, val rw: Int, val hw: Boolean, val taken: Int, val gid: Int, val dn: Int = 0,
+    val ps: Int = 0, val pby: Int = -1, val pans: List<Int> = emptyList(), val pm: String = "", val pms: Int = 0
 )
 
 class FxEvent(val seq: Int, val from: Int, val to: Int, val kind: String)
@@ -394,10 +395,13 @@ class Controller {
         screen = "table"; pushState(); tick()
     }
 
+    private val PAUSE_BLOCKED = setOf("draw", "take", "return", "meld", "add", "discard", "throw", "peek")
+
     private fun tick() {
         main.postDelayed({
             val e = engine ?: return@postDelayed
-            if (!e.roundOver && System.currentTimeMillis() > e.deadline) e.timeout()
+            if (!e.roundOver && e.pauseState != 2 && System.currentTimeMillis() > e.deadline) e.timeout()
+            e.pauseTick()
             pushState(); tick()
         }, 1000)
     }
@@ -412,12 +416,12 @@ class Controller {
     /** البوت يفكر ~1.5 ثانية ثم يلعب خطوة (سحب، ثم نزول ورمي) */
     private fun scheduleBot() {
         val e = engine ?: return
-        if (botPending || e.roundOver || !e.players[e.turn].isBot) return
+        if (botPending || e.roundOver || e.pauseState == 2 || !e.players[e.turn].isBot) return
         botPending = true
         main.postDelayed({
             botPending = false
             val en = engine ?: return@postDelayed
-            if (!en.roundOver && en.players[en.turn].isBot) { en.botStep(); pushState() }
+            if (!en.roundOver && en.pauseState != 2 && en.players[en.turn].isBot) { en.botStep(); pushState() }
         }, 1500)
     }
 
@@ -435,7 +439,12 @@ class Controller {
     private fun act(pid: Int, m: JSONObject) {
         val e = engine ?: return
         try {
-            val err: String? = when (m.optString("t")) {
+            val t = m.optString("t")
+            val err: String? = if (e.pauseState == 2 && t in PAUSE_BLOCKED) "اللعبة متوقفة مؤقتاً" else when (t) {
+                "pausereq" -> e.requestPause(pid)
+                "pauseans" -> e.answerPause(pid, m.optBoolean("ok"))
+                "pausecancel" -> e.cancelPause(pid)
+                "resume" -> e.resume(pid)
                 "draw" -> e.draw(pid)
                 "take" -> e.takeDiscard(pid)
                 "return" -> e.returnTaken(pid)
@@ -598,9 +607,12 @@ class Controller {
             v.getInt("sec"), v.getInt("stock"), v.getInt("discTop"), ps, hand,
             List(ma.length()) { ints(ma.getJSONArray(it)) },
             v.getBoolean("roundOver"), v.getBoolean("gameOver"), v.getString("note"),
-            v.getInt("dby"), v.getInt("rw"), v.getBoolean("hw"), v.getInt("taken"), v.getInt("gid"), v.optInt("dn", 0)
+            v.getInt("dby"), v.getInt("rw"), v.getBoolean("hw"), v.getInt("taken"), v.getInt("gid"), v.optInt("dn", 0),
+            v.optInt("ps", 0), v.optInt("pby", -1), ints(v.optJSONArray("pans") ?: JSONArray()),
+            v.optString("pm", ""), v.optInt("pms", 0)
         )
         ui = st
+        if (prev != null && st.pm.isNotEmpty() && st.pms != prev.pms) msg = st.pm      // «فلان رفض الإيقاف»
         if (prev != null && prev.gid != st.gid) lastGain = null
         // صوت سحب الورقة (من الكومة أو من المرمية) وصوت رمي الورقة على الكومة
         if (prev != null && prev.round == st.round && prev.gid == st.gid) {

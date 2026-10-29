@@ -44,6 +44,15 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
     var note = ""
     var deltas = mapOf<Int, Int>()
     var deadline = 0L
+
+    // ---- إيقاف مؤقت ----
+    var pauseState = 0                 // 0 جارية، 1 طلب إيقاف بانتظار الموافقة، 2 متوقفة
+    var pauseBy = -1                   // من طلب الإيقاف
+    val pauseAcks = mutableSetOf<Int>()
+    var pausedLeft = 0L                // الوقت المتبقي للدور لحظة الإيقاف
+    private var pauseReqAt = 0L
+    var pauseMsg = ""
+    var pauseMsgSeq = 0
     val gid = (System.nanoTime() and 0x3fffffff).toInt()   // رقم اللعبة (يتغير عند لعبة جديدة)
     private var lastFx: JSONObject? = null
 
@@ -74,7 +83,7 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
     fun startRound() {
         round++
         stock.clear(); stock.addAll((0 until Cards.DECK).shuffled())
-        discard.clear(); melds.clear()
+        discard.clear(); melds.clear(); clearPause()
         for (p in players) {
             p.hand = if (p.out) mutableListOf() else MutableList(14) { stock.removeFirst() }
             p.laid = false
@@ -223,6 +232,7 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
         turn = t
         drew = false; taken = -1
         deadline = System.currentTimeMillis() + TURN_MS
+        if (pauseState == 2) pausedLeft = deadline - System.currentTimeMillis()
     }
 
     /** انتهى الوقت: إرجاع الورقة المأخوذة إن وُجدت، سحب تلقائي، ثم رمي أعلى ورقة قيمة */
@@ -234,6 +244,58 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
         drew = true; taken = -1
         val c = p.hand.filter { !Cards.isJoker(it) }.maxByOrNull { Cards.points(it) } ?: p.hand.firstOrNull() ?: return
         discardCard(turn, c)
+    }
+
+    private fun humansOtherThan(pid: Int) = players.filter { !it.out && !it.isBot && it.id != pid }
+    private fun pauseNote(m: String) { pauseMsg = m; pauseMsgSeq++ }
+    private fun clearPause() { pauseState = 0; pauseBy = -1; pauseAcks.clear() }
+    private fun startPause() {
+        pauseState = 2
+        pausedLeft = (deadline - System.currentTimeMillis()).coerceAtLeast(1000L)
+        pauseAcks.clear()
+    }
+    private fun recheckPause() {
+        if (pauseState == 1 && humansOtherThan(pauseBy).all { it.id in pauseAcks }) startPause()
+    }
+
+    /** طلب إيقاف مؤقت: مع البوتات فقط يتوقف فوراً، ومع لاعبين حقيقيين يلزم موافقتهم كلهم */
+    fun requestPause(pid: Int): String? {
+        val p = players.getOrNull(pid) ?: return "غير صالح"
+        if (p.out || p.isBot || roundOver) return "لا يمكن الإيقاف الآن"
+        if (pauseState == 2) return "اللعبة متوقفة بالفعل"
+        if (pauseState == 1) return "هناك طلب إيقاف بانتظار الموافقة"
+        pauseBy = pid; pauseAcks.clear()
+        if (humansOtherThan(pid).isEmpty()) startPause()
+        else { pauseState = 1; pauseReqAt = System.currentTimeMillis() }
+        return null
+    }
+
+    fun answerPause(pid: Int, ok: Boolean): String? {
+        if (pauseState != 1 || pid == pauseBy) return null
+        val p = players.getOrNull(pid) ?: return null
+        if (p.out || p.isBot) return null
+        if (!ok) { clearPause(); pauseNote("${p.name} رفض إيقاف اللعبة"); return null }
+        pauseAcks.add(pid)
+        recheckPause()
+        return null
+    }
+
+    fun cancelPause(pid: Int): String? { if (pauseState == 1 && pid == pauseBy) clearPause(); return null }
+
+    /** الاستئناف: أي لاعب حقيقي يستطيع إكمال اللعبة، والوقت يكمل من حيث توقف */
+    fun resume(pid: Int): String? {
+        val p = players.getOrNull(pid) ?: return null
+        if (pauseState != 2 || p.out || p.isBot) return null
+        clearPause()
+        deadline = System.currentTimeMillis() + pausedLeft
+        return null
+    }
+
+    /** كل ثانية: يُلغى طلب الإيقاف إن لم يرد الجميع خلال 20 ثانية */
+    fun pauseTick() {
+        if (pauseState == 1 && System.currentTimeMillis() - pauseReqAt > 20000) {
+            clearPause(); pauseNote("لم يوافق الجميع على إيقاف اللعبة")
+        }
     }
 
     /** الخاسر: أعلى مجموع نقاط، وعند التعادل الأسوأ في الجولة الأخيرة */
@@ -257,12 +319,13 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
         if (midRound && turn == pid && taken >= 0) discard.addLast(taken)   // الورقة المأخوذة ترجع للرمي
         p.out = true
         p.hand = mutableListOf()
+        if (pauseState == 1) { if (pauseBy == pid) clearPause() else recheckPause() }
         val left = players.filter { !it.out }
         if (left.size <= 1 || left.none { !it.isBot }) {
             // انتهت اللعبة بالانسحاب
             if (midRound) for (q in players) { q.rounds.add(q.pen); q.pen = 0 }
             deltas = players.associate { it.id to 0 }
-            roundOver = true; gameOver = true; taken = -1; handWin = false
+            roundOver = true; gameOver = true; taken = -1; handWin = false; clearPause()
             roundWinner = left.minByOrNull { it.total }?.id ?: -1
             note = "انسحب ${p.name}"
         } else if (midRound && turn == pid) {
@@ -295,6 +358,7 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
      * ضمنة (إنهاء بعد نزول سابق): -30 والبقية بقيمة أوراقهم، ومن لم ينزّل 100.
      */
     private fun finish(w: Int, hand: Boolean) {
+        clearPause()
         val d = mutableMapOf<Int, Int>()
         for (p in players) {
             if (p.out) { d[p.id] = 0; p.rounds.add(p.pen); p.pen = 0; continue }
@@ -316,7 +380,9 @@ class Engine(val players: List<Player>, val totalRounds: Int) {
         put("taken", if (pid == turn) taken else -1)
         put("dn", discard.size)
         lastFx?.let { put("fx", it) }
-        put("sec", maxOf(0, ((deadline - System.currentTimeMillis()) / 1000).toInt()))
+        put("sec", if (pauseState == 2) (pausedLeft / 1000).toInt() else maxOf(0, ((deadline - System.currentTimeMillis()) / 1000).toInt()))
+        put("ps", pauseState); put("pby", pauseBy); put("pans", JSONArray(pauseAcks.toList()))
+        put("pm", pauseMsg); put("pms", pauseMsgSeq)
         put("stock", stock.size); put("discTop", discard.lastOrNull() ?: -1)
         put("roundOver", roundOver); put("gameOver", gameOver); put("note", note)
         put("rw", roundWinner); put("hw", handWin)
